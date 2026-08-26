@@ -1,0 +1,21 @@
+# Build artifacts
+signet
+bin/
+*.test
+*.out
+coverage.*
+
+# Local state and secrets — never commit
+signet.key
+signet.json
+signet-state/
+*.env
+
+# Local scratch
+tmp/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+.idea/
+.vscode/

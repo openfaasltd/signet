@@ -1,0 +1,30 @@
+# VCS
+.git
+.gitignore
+
+# Build artifacts
+signet
+bin/
+*.test
+*.out
+coverage.*
+
+# Secrets and local state — must not leak into the image
+signet.key
+signet.json
+signet-state/
+*.env
+tmp/
+
+# Tests and repo files not needed in the image
+*_test.go
+k8s/
+Makefile
+Dockerfile
+.dockerignore
+
+# Editor / OS noise
+.DS_Store
+*.swp
+.idea/
+.vscode/

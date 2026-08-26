@@ -1,0 +1,20 @@
+{
+  "issuer": "http://127.0.0.1:8080",
+  "users": [
+    {
+      "username": "admin",
+      "password": "admin",
+      "subject": "admin",
+      "name": "Signet Admin",
+      "email": "admin@example.com",
+      "groups": ["admin"]
+    }
+  ],
+  "clients": [
+    {
+      "id": "openfaas",
+      "secret": "openfaas-secret",
+      "redirect_urls": ["http://127.0.0.1:3000/callback"]
+    }
+  ]
+}
