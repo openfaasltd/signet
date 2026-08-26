@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"time"
 )
 
 // runServe starts the signet daemon: validates the license, loads/creates the
@@ -84,5 +88,23 @@ func runServe(args []string) error {
 		}()
 	}
 
-	return <-errCh
+	// Wait for a termination signal (SIGINT/SIGTERM, e.g. systemctl stop) or a
+	// listener error, then drain in-flight requests before exiting.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var serveErr error
+	select {
+	case <-ctx.Done():
+		log.Printf("received shutdown signal, draining connections")
+	case serveErr = <-errCh:
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil && serveErr == nil {
+		serveErr = err
+	}
+
+	return serveErr
 }
