@@ -1,30 +1,45 @@
-# VCS
+# Git
 .git
 .gitignore
+.gitattributes
 
-# Build artifacts
-signet
-bin/
-*.test
-*.out
-coverage.*
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
 
-# Secrets and local state — must not leak into the image
+# Build outputs
+/bin/
+/signet
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Local state and secrets (never ship in the image)
 signet.key
 signet.json
 signet-state/
 *.env
-tmp/
+/tmp/
 
-# Tests and repo files not needed in the image
+# Docs (skill.md is embedded in the binary and must stay)
+README.md
+LICENSE
+
+# CI/CD
+.github/
+
+# Key material (injected as a build-arg, not read from the context)
+/key.pub
+/hack/
+
+# Test files
 *_test.go
-k8s/
-Makefile
-Dockerfile
-.dockerignore
 
-# Editor / OS noise
-.DS_Store
-*.swp
-.idea/
-.vscode/
+# Coverage
+*.out
+coverage.*

@@ -36,17 +36,20 @@ Copy `signet.example.json` to `signet.json`, or create it with:
 }
 ```
 
-Run it with:
+Run the daemon with an OpenFaaS Pro, Slicer, or Inlets Pro licence:
 
 ```sh
-go run . --config signet.json --issuer http://127.0.0.1:8080
+signet up --license-file ./license.txt --config signet.json \
+  --issuer http://127.0.0.1:8080 --state-dir ./signet-state
 ```
 
-The ES256 signing key is created at `signet.key` on first start and reused on
-subsequent starts. Mount that path on a volume when running in Kubernetes.
-Refresh tokens and an admin API are intentionally not included in v0. A
-ready-to-edit single-replica deployment is provided in `k8s/signet.yaml`;
-replace the example credentials before applying it.
+The ES256 signing key and provisioned users and clients are kept in the state
+directory. Mount it on persistent storage in Kubernetes. A ready-to-edit
+single-replica deployment is provided in `k8s/signet.yaml`; it uses the
+`openfaas-license` secret and the `signet-state` PVC.
+
+Published images are versioned at `alexellis2/signet` (starting with
+`v0.0.1`); deployments must use an explicit version tag, never `latest`.
 
 The deployment defines two Services: `signet` is the internal ClusterIP
 service, and `signet-external` is the NodePort-facing service. The browser
