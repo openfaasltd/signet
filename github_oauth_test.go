@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -38,7 +39,7 @@ func githubTestServer(t *testing.T, login string, orgs []string, pendingFirst bo
 		_, _ = w.Write([]byte(`{"login":"` + login + `","name":"Test User","email":"test@example.com"}`))
 	})
 	mux.HandleFunc("/api.github.com/user/orgs", func(w http.ResponseWriter, r *http.Request) {
-		list := []string{}
+		var list []string
 		for _, o := range orgs {
 			list = append(list, `{"login":"`+o+`"}`)
 		}
@@ -56,39 +57,70 @@ func githubTestServer(t *testing.T, login string, orgs []string, pendingFirst bo
 	return ts
 }
 
+func testServerGitHub(t *testing.T, seed *Config) *Server {
+	t.Helper()
+	store, err := LoadOrCreateStore(t.TempDir(), "http://issuer.test", seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.AddClient(Client{ID: "client", Secret: "fixture-secret", RedirectURLs: []string{"http://client.test/callback"}}); err != nil {
+		t.Fatal(err)
+	}
+	return NewServer(store)
+}
+
+func ghStart(t *testing.T, s *Server) (string, string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{
+		"client_id": "client", "redirect_uri": "http://client.test/callback",
+		"code_challenge": pkceChallenge("verifier"), "code_challenge_method": "S256",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/auth/github/device", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("device start status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		ID       string `json:"id"`
+		UserCode string `json:"user_code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.ID == "" || resp.UserCode == "" {
+		t.Fatalf("start missing id/user_code: %s", rec.Body.String())
+	}
+	return resp.ID, resp.UserCode
+}
+
+func ghStatus(t *testing.T, s *Server, id string) (int, map[string]any) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"id": id})
+	req := httptest.NewRequest(http.MethodPost, "/auth/github/device/status", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return rec.Code, out
+}
+
 func TestGitHubDeviceFlowToCode(t *testing.T) {
 	githubTestServer(t, "octocat", []string{"acme"}, false)
 	s := testServerGitHub(t, &Config{GitHub: &GitHubOAuth{ClientID: "test-app", AllowedLogins: []string{"octocat"}}})
 
-	query := url.Values{"response_type": {"code"}, "client_id": {"client"}, "redirect_uri": {"http://client.test/callback"}, "code_challenge": {pkceChallenge("verifier")}, "code_challenge_method": {"S256"}}
-	req := httptest.NewRequest(http.MethodGet, "/auth/github?"+query.Encode(), nil)
-	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("login page status = %d", rec.Code)
+	id, _ := ghStart(t, s)
+	status, resp := ghStatus(t, s, id)
+	if status != http.StatusOK {
+		t.Fatalf("status code = %d, body %s", status, resp)
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "ABCD-EFGH") {
-		t.Fatal("login page should show the user code")
+	if resp["status"] != "authenticated" {
+		t.Fatalf("status = %v", resp["status"])
 	}
-
-	// Poll status -> token available -> code minted.
-	ptk := extractPTK(t, body)
-	statusReq := httptest.NewRequest(http.MethodGet, "/auth/github/status/"+ptk, nil)
-	statusReq.Header.Set("Accept", "application/json")
-	statusRec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(statusRec, statusReq)
-	var resp struct {
-		Status      string `json:"status"`
-		RedirectURL string `json:"redirect_url"`
-	}
-	if err := json.Unmarshal(statusRec.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp.Status != "ready" {
-		t.Fatalf("expected ready, got %s: %s", resp.Status, statusRec.Body.String())
-	}
-	u, err := url.Parse(resp.RedirectURL)
+	redirect, _ := resp["redirect_url"].(string)
+	u, err := url.Parse(redirect)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +129,6 @@ func TestGitHubDeviceFlowToCode(t *testing.T) {
 		t.Fatal("missing code in redirect")
 	}
 
-	// Exchange the code -> token issued with GitHub identity claims.
 	tokenForm := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {"http://client.test/callback"}, "code_verifier": {"verifier"}}
 	treq := httptest.NewRequest(http.MethodPost, "/token", strings.NewReader(tokenForm.Encode()))
 	treq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -129,16 +160,13 @@ func TestGitHubAllowlistRejects(t *testing.T) {
 	githubTestServer(t, "someone-else", nil, false)
 	s := testServerGitHub(t, &Config{GitHub: &GitHubOAuth{ClientID: "test-app", AllowedLogins: []string{"octocat"}}})
 
-	req := httptest.NewRequest(http.MethodGet, "/auth/github?"+url.Values{"client_id": {"client"}, "redirect_uri": {"http://client.test/callback"}}.Encode(), nil)
-	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, req)
-	ptk := extractPTK(t, rec.Body.String())
-	status := httptest.NewRecorder()
-	s.Handler().ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/auth/github/status/"+ptk, nil))
-	var resp map[string]string
-	_ = json.Unmarshal(status.Body.Bytes(), &resp)
-	if resp["status"] != "error" || resp["error"] != "not_allowed" {
-		t.Fatalf("expected not_allowed, got %s", status.Body.String())
+	id, _ := ghStart(t, s)
+	status, resp := ghStatus(t, s, id)
+	if status != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", status)
+	}
+	if resp["error"] != "access_denied" {
+		t.Fatalf("expected access_denied, got %v", resp)
 	}
 }
 
@@ -146,33 +174,21 @@ func TestGitHubStatusPendingThenReady(t *testing.T) {
 	githubTestServer(t, "octocat", []string{"acme"}, true) // first token poll -> pending
 	s := testServerGitHub(t, &Config{GitHub: &GitHubOAuth{ClientID: "test-app", AllowedLogins: []string{"octocat"}}})
 
-	req := httptest.NewRequest(http.MethodGet, "/auth/github?"+url.Values{"client_id": {"client"}, "redirect_uri": {"http://client.test/callback"}}.Encode(), nil)
-	rec := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rec, req)
-	ptk := extractPTK(t, rec.Body.String())
-
-	status := httptest.NewRecorder()
-	s.Handler().ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/auth/github/status/"+ptk, nil))
-	var first map[string]string
-	_ = json.Unmarshal(status.Body.Bytes(), &first)
-	if first["status"] != "pending" {
-		t.Fatalf("expected pending, got %s", status.Body.String())
+	id, _ := ghStart(t, s)
+	status, _ := ghStatus(t, s, id)
+	if status != http.StatusAccepted {
+		t.Fatalf("expected 202 pending on first poll, got %d", status)
 	}
-
-	status2 := httptest.NewRecorder()
-	s.Handler().ServeHTTP(status2, httptest.NewRequest(http.MethodGet, "/auth/github/status/"+ptk, nil))
-	var second map[string]string
-	_ = json.Unmarshal(status2.Body.Bytes(), &second)
-	if second["status"] != "ready" {
-		t.Fatalf("expected ready on second poll, got %s", status2.Body.String())
+	status, resp := ghStatus(t, s, id)
+	if status != http.StatusOK {
+		t.Fatalf("expected 200 on second poll, got %d", status)
+	}
+	if resp["status"] != "authenticated" {
+		t.Fatalf("status = %v", resp["status"])
 	}
 }
 
 func TestGitHubStatusPollParsesJSONTokenResponse(t *testing.T) {
-	// GitHub honours Accept: application/json and returns a JSON object on a
-	// successful device token exchange. This exercised a real bug where the
-	// form-encoded parser could not see JSON access_token and the flow never
-	// advanced past pending.
 	oldD, oldT, oldU, oldO := githubDeviceCodeURL, githubTokenURL, githubUserURL, githubOrgsURL
 	mux := http.NewServeMux()
 	mux.HandleFunc("/login/device/code", func(w http.ResponseWriter, r *http.Request) {
@@ -200,49 +216,36 @@ func TestGitHubStatusPollParsesJSONTokenResponse(t *testing.T) {
 	})
 
 	s := testServerGitHub(t, &Config{GitHub: &GitHubOAuth{ClientID: "test-app", AllowedLogins: []string{"octocat"}}})
-	init := httptest.NewRecorder()
-	s.Handler().ServeHTTP(init, httptest.NewRequest(http.MethodGet, "/auth/github?"+url.Values{"client_id": {"client"}, "redirect_uri": {"http://client.test/callback"}}.Encode(), nil))
-	ptk := extractPTK(t, init.Body.String())
-
-	status := httptest.NewRecorder()
-	s.Handler().ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/auth/github/status/"+ptk, nil))
-	var resp map[string]string
-	_ = json.Unmarshal(status.Body.Bytes(), &resp)
-	if resp["status"] != "ready" {
-		t.Fatalf("expected ready for JSON token response, got %s", status.Body.String())
+	id, _ := ghStart(t, s)
+	status, resp := ghStatus(t, s, id)
+	if status != http.StatusOK {
+		t.Fatalf("expected 200 for JSON token response, got %d: %s", status, resp)
 	}
-	u, err := url.Parse(resp["redirect_url"])
-	if err != nil {
-		t.Fatal(err)
+	if resp["status"] != "authenticated" {
+		t.Fatalf("status = %v", resp["status"])
 	}
-	if u.Query().Get("code") == "" {
-		t.Fatal("missing code in redirect")
+	redirect, _ := resp["redirect_url"].(string)
+	if u, err := url.Parse(redirect); err != nil || u.Query().Get("code") == "" {
+		t.Fatalf("missing code in redirect: %s", redirect)
 	}
 }
 
-func extractPTK(t *testing.T, body string) string {
-	t.Helper()
-	const k = `const ptk="`
-	i := strings.Index(body, k)
-	if i < 0 {
-		t.Fatalf("ptk not found in page")
-	}
-	rest := body[i+len(k):]
-	j := strings.Index(rest, `"`)
-	return rest[:j]
-}
+func TestGitHubDeviceCancel(t *testing.T) {
+	githubTestServer(t, "octocat", nil, false)
+	s := testServerGitHub(t, &Config{GitHub: &GitHubOAuth{ClientID: "test-app", AllowedLogins: []string{"octocat"}}})
 
-func testServerGitHub(t *testing.T, seed *Config) *Server {
-	t.Helper()
-	store, err := LoadOrCreateStore(t.TempDir(), "http://issuer.test", seed)
-	if err != nil {
-		t.Fatal(err)
+	id, _ := ghStart(t, s)
+	body, _ := json.Marshal(map[string]string{"id": id})
+	req := httptest.NewRequest(http.MethodPost, "/auth/github/device/cancel", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("cancel status = %d", rec.Code)
 	}
-	// Confidential fixture so the code can be minted and later exchanged via
-	// BasicAuth (deterministic secret for the test).
-	_, _, err = store.AddClient(Client{ID: "client", Secret: "fixture-secret", RedirectURLs: []string{"http://client.test/callback"}})
-	if err != nil {
-		t.Fatal(err)
+	// session should be gone
+	status, _ := ghStatus(t, s, id)
+	if status != http.StatusNotFound {
+		t.Fatalf("expected 404 after cancel, got %d", status)
 	}
-	return NewServer(store)
 }

@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"io"
 	"net/http"
 	"net/url"
@@ -37,10 +36,10 @@ type DeviceAuth struct {
 	Interval        int    `json:"interval"`
 }
 
-// githubDevice is an in-flight device-flow session keyed by our own poll
-// token, capturing the originating authorize parameters so we can mint a code.
+// githubDevice is an in-flight device-flow session keyed by our own poll id,
+// capturing the originating authorize parameters so we can mint a code.
 type githubDevice struct {
-	ptk             string
+	id              string
 	deviceCode      string
 	userCode        string
 	verificationURI string
@@ -58,91 +57,41 @@ type githubDevice struct {
 	done         bool
 }
 
-var githubLoginPage = template.Must(template.New("gh").Parse(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in with GitHub · Signet</title>
-<style>
-:root{--bg:#10141c;--card:#161c28;--border:#34445c;--text:#ecf2ff;--text-2:#b8c7dc;--muted:#8294ac;--blue:#9dd6ff;--ok:#3fb950;--err:#f85149}
-*{box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem}
-.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:2.4rem 2rem;width:100%;max-width:26rem;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.4)}
-.mark{width:64px;height:64px;border-radius:14px;background:var(--blue);color:#102033;display:flex;align-items:center;justify-content:center;font-size:2rem;font-weight:800;margin:0 auto 1.1rem}
-h1{margin:0 0 1.5rem;font-size:1.25rem;font-weight:650}
-.step{color:var(--text-2);font-size:.92rem;line-height:1.6;margin:0 0 1.2rem}
-.uri{color:#fff;overflow-wrap:anywhere;text-decoration:underline}
-.code{display:inline-block;background:#0b1017;border:1px solid var(--border);border-radius:12px;padding:.8rem 1.2rem;font-family:ui-monospace,SFMono-Regular,monospace;font-size:1.7rem;letter-spacing:.22em;color:var(--blue);font-weight:800;margin-bottom:1.4rem}
-.status{display:flex;align-items:center;justify-content:center;gap:.5rem;font-size:1rem;font-weight:600;color:var(--text-2);margin:0}
-.status svg{flex:none}
-.spin{width:26px;height:26px;margin-right:.4rem;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:s .8s linear infinite;display:inline-block;vertical-align:middle}
-@keyframes s{to{transform:rotate(360deg)}}
-.ok{color:var(--ok)}.err{color:var(--err)}
-.hint{margin-top:1.6rem;font-size:.78rem;color:var(--muted)}
-.msg{background:#0b1017;border:1px solid var(--border);border-radius:10px;padding:.8rem 1rem;margin-top:1.1rem;color:var(--text-2);font-family:ui-monospace,monospace;font-size:.8rem;text-align:left;white-space:pre-wrap;word-break:break-word}
-[hidden]{display:none}
-</style></head><body>
-<div class="card">
-<div class="mark">S</div>
-<h1>Sign in with GitHub</h1>
-<div id="wait">
-<p class="step">Open <a class="uri" target="_blank" rel="noopener" href="{{.URI}}">{{.URI}}</a> in a new tab and enter the code:</p>
-<div class="code">{{.UserCode}}</div>
-<div class="status"><span class="spin"></span>Waiting for your authorization&hellip;</div>
-</div>
-<div id="done" hidden>
-<div class="status ok"><svg viewBox="0 0 16 16" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M2.5 8.5l3.5 3.5 7-8"/></svg>You're signed in</div>
-<p class="step">Signet verified your GitHub identity. Opening the app&hellip;</p>
-</div>
-<div id="fail" hidden>
-<div class="status err"><svg viewBox="0 0 16 16" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>Sign-in failed</div>
-<p class="step" id="failreason">Could not complete the sign-in.</p>
-<div class="msg" id="failmsg" hidden></div>
-</div>
-<p class="hint">Don&rsquo;t close this tab while you authorize.</p>
-</div>
-<script>
-const ptk="{{.PTK}}";
-function ready(url){
-  document.getElementById("wait").hidden=true;
-  document.getElementById("done").hidden=false;
-  setTimeout(function(){ window.location.assign(url); }, 1200);
-}
-function fail(reason,msg){
-  document.getElementById("wait").hidden=true;
-  document.getElementById("fail").hidden=false;
-  if(reason){ document.getElementById("failreason").textContent=reason; }
-  if(msg){ var el=document.getElementById("failmsg"); el.textContent=msg; el.hidden=false; }
-}
-( async function poll(){
-  try{
-    const r=await fetch("/auth/github/status/"+ptk,{headers:{Accept:"application/json"}});
-    const j=await r.json();
-    if(j.status==="ready"){ ready(j.redirect_url); return; }
-    if(j.status==="error"){ fail(null, j.error); return; }
-  }catch(e){}
-  setTimeout(poll, {{.Interval}}*1000);
-})();
-</script></body></html>`))
-
-// githubLogin starts a device flow and renders the user-facing code page.
-func (s *Server) githubLogin(w http.ResponseWriter, r *http.Request) {
+// githubDeviceStart begins a device flow and returns the session plus the
+// short-lived code the operator must enter at GitHub. Mirrors superterm's
+// handleGitHubDeviceStart.
+func (s *Server) githubDeviceStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	cfg := s.store.GitHubOAuthCfg()
 	if !cfg.Enabled() {
-		http.NotFound(w, r)
+		http.Error(w, "github auth is not configured", http.StatusNotFound)
 		return
 	}
-	query := r.URL.Query()
+	var p struct {
+		ClientID      string `json:"client_id"`
+		RedirectURI   string `json:"redirect_uri"`
+		Scope         string `json:"scope"`
+		CodeChallenge string `json:"code_challenge"`
+		Nonce         string `json:"nonce"`
+		State         string `json:"state"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&p)
+
 	dev, err := startGithubDevice(cfg.ClientID)
 	if err != nil {
-		http.Error(w, "could not start GitHub device flow: "+err.Error(), http.StatusBadGateway)
+		http.Error(w, "github login failed", http.StatusBadGateway)
 		return
 	}
-	dev.ptk, _ = randomString(16)
-	dev.clientID = query.Get("client_id")
-	dev.redirectURI = query.Get("redirect_uri")
-	dev.scope = query.Get("scope")
-	dev.codeChallenge = query.Get("code_challenge")
-	dev.nonce = query.Get("nonce")
-	dev.stateParam = query.Get("state")
+	dev.id, _ = randomString(16)
+	dev.clientID = p.ClientID
+	dev.redirectURI = p.RedirectURI
+	dev.scope = p.Scope
+	dev.codeChallenge = p.CodeChallenge
+	dev.nonce = p.Nonce
+	dev.stateParam = p.State
 
 	s.mu <- struct{}{}
 	for k, d := range s.ghDevs {
@@ -150,75 +99,127 @@ func (s *Server) githubLogin(w http.ResponseWriter, r *http.Request) {
 			delete(s.ghDevs, k)
 		}
 	}
-	s.ghDevs[dev.ptk] = dev
+	s.ghDevs[dev.id] = dev
 	<-s.mu
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = githubLoginPage.Execute(w, map[string]string{
-		"URI": dev.verificationURI, "UserCode": dev.userCode,
-		"PTK": dev.ptk, "Interval": fmt.Sprint(dev.interval),
+	expires := int(time.Until(dev.expiresAt).Seconds())
+	if expires <= 0 {
+		expires = dev.interval * 2
+	}
+	s.json(w, map[string]any{
+		"id": dev.id, "user_code": dev.userCode,
+		"verification_uri": dev.verificationURI,
+		"expires_in":       expires, "interval": dev.interval,
 	})
 }
 
-// githubStatus polls the device flow on behalf of a running browser session.
-// It returns JSON so the page can auto-advance; on success it mints a signet
-// authorization code and reports the redirect_url once.
-func (s *Server) githubStatus(w http.ResponseWriter, r *http.Request) {
-	cfg := s.store.GitHubOAuthCfg()
-	if !cfg.Enabled() {
-		http.Error(w, "GitHub federated login is not configured", http.StatusNotFound)
+// githubDeviceStatus polls the device flow. Mirrors superterm's status
+// protocol: 200 = authenticated (a signet code was minted), 202 = still
+// pending (retry_after), 410 = expired, 403/401 = identity not allowed.
+func (s *Server) githubDeviceStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	ptk := trimPathPrefix(r.URL.Path, "/auth/github/status/")
+	cfg := s.store.GitHubOAuthCfg()
+	if !cfg.Enabled() {
+		http.Error(w, "github auth is not configured", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
 
 	var dev *githubDevice
 	s.mu <- struct{}{}
-	dev = s.ghDevs[ptk]
+	dev = s.ghDevs[body.ID]
 	<-s.mu
 	if dev == nil {
-		s.json(w, map[string]string{"status": "error", "error": "expired_session"})
+		http.Error(w, "unknown github login", http.StatusNotFound)
 		return
 	}
 	if time.Now().After(dev.expiresAt) {
-		s.json(w, map[string]string{"status": "error", "error": "expired"})
+		s.mu <- struct{}{}
+		delete(s.ghDevs, body.ID)
+		<-s.mu
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusGone)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "expired"})
 		return
 	}
 	if dev.done {
-		s.json(w, map[string]string{"status": "ready", "redirect_url": dev.doneRedirect})
+		s.json(w, map[string]any{"status": "authenticated", "redirect_url": dev.doneRedirect})
 		return
 	}
 
 	accessToken, err := pollGithubToken(cfg.ClientID, dev.deviceCode)
 	if err != nil {
-		s.json(w, map[string]string{"status": "pending"})
+		if err == errPending {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "pending", "retry_after": dev.interval})
+			return
+		}
+		http.Error(w, "github login failed", http.StatusBadGateway)
 		return
 	}
 
 	profile, orgs, err := fetchGithubIdentity(accessToken)
 	if err != nil {
-		s.json(w, map[string]string{"status": "error", "error": "identity_fetch_failed"})
+		http.Error(w, "github profile failed", http.StatusBadGateway)
 		return
 	}
 	if !cfg.allows(profile.Login, orgs) {
-		s.json(w, map[string]string{"status": "error", "error": "not_allowed"})
+		s.mu <- struct{}{}
+		delete(s.ghDevs, body.ID)
+		<-s.mu
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "access_denied"})
 		return
 	}
 
-	redirect := s.mintGithubCode(dev, profile)
+	redirect, ok := s.mintGithubCode(dev, profile)
+	if !ok {
+		http.Error(w, "invalid client", http.StatusBadRequest)
+		return
+	}
 	s.mu <- struct{}{}
 	dev.done = true
 	dev.doneRedirect = redirect
 	<-s.mu
-	s.json(w, map[string]string{"status": "ready", "redirect_url": redirect})
+	s.json(w, map[string]any{"status": "authenticated", "redirect_url": redirect})
+}
+
+// githubDeviceCancel abandons an in-flight device flow.
+func (s *Server) githubDeviceCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body.ID != "" {
+		s.mu <- struct{}{}
+		delete(s.ghDevs, body.ID)
+		<-s.mu
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // mintGithubCode validates the stored authorize params were for a real client
-// and issues an authorization code bound to the GitHub identity, then returns
-// the full redirect URL (mirrors the password path in authorize).
-func (s *Server) mintGithubCode(dev *githubDevice, profile *githubProfile) string {
+// and issues an authorization code bound to the GitHub identity, returning the
+// full redirect URL and whether it succeeded.
+func (s *Server) mintGithubCode(dev *githubDevice, profile *githubProfile) (string, bool) {
 	client, ok := s.store.Client(dev.clientID)
 	if !ok || !allowedRedirect(client, dev.redirectURI) {
-		return "/auth/github/status/" + dev.ptk + "?error=invalid_client"
+		return "", false
 	}
 
 	code, _ := randomString(32)
@@ -242,7 +243,7 @@ func (s *Server) mintGithubCode(dev *githubDevice, profile *githubProfile) strin
 		params.Set("state", dev.stateParam)
 	}
 	redirect.RawQuery = params.Encode()
-	return redirect.String()
+	return redirect.String(), true
 }
 
 // startGithubDevice requests a device code from GitHub for the given client.
@@ -416,8 +417,4 @@ func intersectsString(a, b []string) bool {
 		}
 	}
 	return false
-}
-
-func trimPathPrefix(s, prefix string) string {
-	return strings.TrimPrefix(s, prefix)
 }

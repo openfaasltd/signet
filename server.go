@@ -38,8 +38,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/jwks.json", s.jwks)
 	mux.HandleFunc("/authorize", s.authorize)
 	mux.HandleFunc("/token", s.token)
-	mux.HandleFunc("/auth/github", s.githubLogin)
-	mux.HandleFunc("/auth/github/status/", s.githubStatus)
+	mux.HandleFunc("/auth/github/device", s.githubDeviceStart)
+	mux.HandleFunc("/auth/github/device/status", s.githubDeviceStatus)
+	mux.HandleFunc("/auth/github/device/cancel", s.githubDeviceCancel)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.Handle("/admin/", s.adminHandler())
 	return mux
@@ -130,7 +131,17 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	data := loginData{Action: r.URL.RequestURI(), ClientID: client.ID, Scope: query.Get("scope"), Username: query.Get("login_hint")}
 	if gh := s.store.GitHubOAuthCfg(); gh.Enabled() {
-		data.GitHubLink = "/auth/github?" + query.Encode()
+		params, _ := json.Marshal(map[string]string{
+			"client_id":             client.ID,
+			"redirect_uri":          query.Get("redirect_uri"),
+			"scope":                 query.Get("scope"),
+			"code_challenge":        query.Get("code_challenge"),
+			"nonce":                 query.Get("nonce"),
+			"state":                 query.Get("state"),
+			"code_challenge_method": query.Get("code_challenge_method"),
+		})
+		data.GitHubEnabled = true
+		data.GitHubParams = template.JS(params)
 	}
 	if r.Method == http.MethodPost {
 		if err := r.ParseForm(); err != nil {
@@ -169,7 +180,11 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	s.login(w, data)
 }
 
-type loginData struct{ Action, ClientID, Scope, Username, Error, GitHubLink string }
+type loginData struct {
+	Action, ClientID, Scope, Username, Error string
+	GitHubEnabled                            bool
+	GitHubParams                             template.JS
+}
 
 var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 <html lang="en">
@@ -196,6 +211,21 @@ input:focus { border-color: #9dd6ff; box-shadow: 0 0 0 3px #9dd6ff2b; }
 button { min-height: 42px; margin-top: 4px; border: 0; border-radius: 8px; background: #9dd6ff; color: #102033; cursor: pointer; font: inherit; font-weight: 800; }
 button:hover { background: #b8e3ff; }
 .error { margin: 0 0 20px; padding: 12px 14px; border: 1px solid #b95768; border-radius: 9px; background: #512934; color: #ffd8de; line-height: 1.45; }
+.divider { display: flex; align-items: center; gap: 12px; color: #8294ac; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; margin: 18px 0 14px; }
+.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: #34445c; }
+.ghblock { display: grid; gap: 12px; }
+.gh-panel { display: none; color: #b8c7dc; font-size: .92rem; line-height: 1.5; }
+.gh-link { color: #9dd6ff; word-break: break-all; }
+.gh-code { text-align: center; background: #0b1017; border: 1px solid #34445c; border-radius: 12px; padding: 14px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 1.5rem; letter-spacing: .24em; color: #9dd6ff; font-weight: 800; margin: 4px 0 2px; }
+.gh-actions { display: flex; gap: 10px; }
+.gh-actions button { flex: 1; min-height: 40px; margin-top: 0; }
+button.gh-ghost { background: #172233; color: #ecf2ff; border: 1px solid #34445c; }
+.gh-status { display: flex; align-items: center; gap: 8px; font-size: .9rem; color: #9db1cd; }
+.ghspin { width: 16px; height: 16px; border: 2px solid #34445c; border-top-color: #9dd6ff; border-radius: 50%; animation: ghspin .8s linear infinite; flex: none; }
+@keyframes ghspin { to { transform: rotate(360deg); } }
+.gh-ok { color: #3fb950; font-weight: 700; }
+.gh-err { color: #f85149; font-weight: 700; }
+.gh-hint { color: #8294ac; font-size: .72rem; text-align: center; }
 </style>
 </head>
 <body>
@@ -209,7 +239,80 @@ button:hover { background: #b8e3ff; }
     <label>Password<input type="password" name="password" autocomplete="current-password"></label>
     <button type="submit">Sign in</button>
   </form>
-  {{if .GitHubLink}}<p style="text-align:center;margin:18px 0 0;"><a style="display:block;padding:12px 16px;border-radius:9px;background:#24292f;color:#ffffff;font-weight:700;text-decoration:none;" href="{{.GitHubLink}}">Sign in with GitHub</a></p>{{end}}
+  {{if .GitHubEnabled}}
+  <div class="divider">or</div>
+  <div id="ghLogin" class="ghblock">
+    <button type="button" id="ghStart">Sign in with GitHub</button>
+  </div>
+  <div id="ghDevice" class="gh-panel">
+    <div>Open <a class="gh-link" id="ghLink" href="#" target="_blank" rel="noopener">github.com/login/device</a> in a new tab and enter the code:</div>
+    <div class="gh-code" id="ghCode">……</div>
+    <div class="gh-actions">
+      <button type="button" class="gh-ghost" id="ghCopy">Copy</button>
+      <button type="button" class="gh-ghost" id="ghCancel">Cancel</button>
+    </div>
+    <div class="gh-status"><span class="ghspin"></span><span id="ghStatus">Waiting for your authorization…</span></div>
+  </div>
+  <div id="ghDone" class="gh-panel"><div class="gh-status gh-ok">You&rsquo;re signed in</div><div style="color:#b8c7dc">Signet verified your GitHub identity. Opening the app&hellip;</div></div>
+  <div id="ghFail" class="gh-panel"><div class="gh-status gh-err">Sign-in failed</div><div id="ghFailMsg" style="color:#b8c7dc">Could not complete the sign-in.</div></div>
+  <div class="gh-hint" id="ghHint" style="margin-top:14px">Device code expires in <span id="ghExp">—</span>s.</div>
+  <script>
+  (function(){
+    if(!document.getElementById) return;
+    var enabled = {{.GitHubEnabled}};
+    if(!enabled) return;
+    var P = {{.GitHubParams}};
+    var startBtn=document.getElementById('ghStart');
+    var loginForm=document.querySelector('form');
+    var devPanel=document.getElementById('ghDevice');
+    var donePanel=document.getElementById('ghDone');
+    var failPanel=document.getElementById('ghFail');
+    var codeEl=document.getElementById('ghCode');
+    var linkEl=document.getElementById('ghLink');
+    var statusEl=document.getElementById('ghStatus');
+    var expEl=document.getElementById('ghExp');
+    var failMsg=document.getElementById('ghFailMsg');
+    var hint=document.getElementById('ghHint');
+    var id='', url='', timer=null, countdown=null;
+
+    function post(p,path){ return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); }
+    function copyTxt(t){ return (navigator.clipboard? navigator.clipboard.writeText(t): Promise.reject()).catch(function(){ var ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');}catch(e){} document.body.removeChild(ta); }); }
+    document.getElementById('ghCopy').addEventListener('click',function(){ copyTxt(codeEl.textContent); var b=this; b.textContent='Copied'; setTimeout(function(){b.textContent='Copy';},1200); });
+    document.getElementById('ghCancel').addEventListener('click',function(){ clearInterval(timer); clearInterval(countdown); if(id) post({id:id},'/auth/github/device/cancel'); reset(); });
+    function reset(){ loginForm.style.display=''; startBtn.style.display=''; devPanel.style.display='none'; donePanel.style.display='none'; failPanel.style.display='none'; hint.style.display=''; initStatus(); }
+    function initStatus(){ statusEl.innerHTML='Waiting for your authorization…'; var s=document.getElementById('ghProps'); }
+
+    function poll(){
+      post({id:id},'/auth/github/device/status').then(function(r){
+        if(r.status===200){ return r.json().then(function(d){ clearInterval(timer); clearInterval(countdown); loginForm.style.display='none'; startBtn.style.display='none'; devPanel.style.display='none'; donePanel.style.display=''; window.setTimeout(function(){ if(d.redirect_url) window.location.assign(d.redirect_url); },1200); }); }
+        if(r.status===202){ return r.json().then(function(d){ window.setTimeout(poll,(d.retry_after||5)*1000); }); }
+        clearInterval(timer);
+        loginForm.style.display='none'; startBtn.style.display='none'; devPanel.style.display='none'; failPanel.style.display='';
+        failMsg.textContent = (r.status===410? 'The code expired. Start again to get a new one.' : (r.status===403? 'Your GitHub identity is not authorized for this Signet.' : 'GitHub login failed. Try again.'));
+      }).catch(function(){ window.setTimeout(poll,5000); });
+    }
+
+    function countdown(from){ var left=from||900; expEl.textContent=left; countdown=setInterval(function(){ left--; if(left<=0){ clearInterval(countdown); expEl.textContent='0'; } else expEl.textContent=left; },1000); }
+
+    startBtn.addEventListener('click',function(){
+      startBtn.disabled=true; startBtn.textContent='Starting GitHub…';
+      post(P,'/auth/github/device').then(function(r){
+        startBtn.disabled=false; startBtn.textContent='Sign in with GitHub';
+        if(r.status!==200){ failMsg.textContent='Could not start GitHub login. Try again.'; return; }
+        return r.json();
+      }).then(function(d){
+        id=d.id; url=d.verification_uri||'https://github.com/login/device';
+        codeEl.textContent=d.user_code||'----';
+        linkEl.textContent=url.replace(/^https?:\/\//,''); linkEl.href=url;
+        loginForm.style.display='none'; startBtn.style.display='none'; donePanel.style.display='none'; failPanel.style.display='none';
+        devPanel.style.display=''; hint.style.display='';
+        countdown(d.expires_in||900);
+        poll();
+      }).catch(function(){ startBtn.disabled=false; startBtn.textContent='Sign in with GitHub'; });
+    });
+  })();
+  </script>
+  {{end}}
 </main>
 </body>
 </html>`))
