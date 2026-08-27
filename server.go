@@ -209,7 +209,7 @@ button:hover { background: #b8e3ff; }
     <label>Password<input type="password" name="password" autocomplete="current-password"></label>
     <button type="submit">Sign in</button>
   </form>
-  {{if .GitHubLink}}<p style="text-align:center;margin:18px 0 0;"><a style="background:#6e5494;" href="{{.GitHubLink}}">Sign in with GitHub</a></p>{{end}}
+  {{if .GitHubLink}}<p style="text-align:center;margin:18px 0 0;"><a style="display:block;padding:12px 16px;border-radius:9px;background:#24292f;color:#ffffff;font-weight:700;text-decoration:none;" href="{{.GitHubLink}}">Sign in with GitHub</a></p>{{end}}
 </main>
 </body>
 </html>`))
