@@ -272,13 +272,13 @@ button.gh-ghost { background: #172233; color: #ecf2ff; border: 1px solid #34445c
     var expEl=document.getElementById('ghExp');
     var failMsg=document.getElementById('ghFailMsg');
     var hint=document.getElementById('ghHint');
-    var id='', url='', timer=null, countdown=null;
+    var id='', url='', timer=null, cdTimer=null, started=false;
 
     function post(p,path){ return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p||{}),credentials:'same-origin'}); }
     function showLogin(){ loginForm.style.display=''; startBtn.style.display=''; devPanel.style.display='none'; donePanel.style.display='none'; failPanel.style.display='none'; hint.style.display='none'; }
-    function showPanel(){ loginForm.style.display='none'; startBtn.style.display='none'; failPanel.style.display='none'; donePanel.style.display='none'; devPanel.style.display=''; hint.style.display=''; }
-    function showDone(redir){ clearInterval(timer); clearInterval(countdown); loginForm.style.display='none'; startBtn.style.display='none'; devPanel.style.display='none'; failPanel.style.display='none'; donePanel.style.display=''; hint.style.display='none'; window.setTimeout(function(){ if(redir) window.location.assign(redir); },1200); }
-    function showFail(reason){ clearInterval(timer); clearInterval(countdown); loginForm.style.display='none'; startBtn.style.display='none'; devPanel.style.display='none'; donePanel.style.display='none'; failPanel.style.display=''; hint.style.display='none'; failMsg.textContent=reason||'GitHub login failed. Try again.'; }
+    function showPanel(){ loginForm.style.display='none'; startBtn.style.display='none'; failPanel.style.display='none'; donePanel.style.display='none'; devPanel.style.display='block'; hint.style.display=''; }
+    function showDone(redir){ clearInterval(timer); clearInterval(cdTimer); loginForm.style.display='none'; startBtn.style.display='none'; devPanel.style.display='none'; failPanel.style.display='none'; donePanel.style.display='block'; hint.style.display='none'; window.setTimeout(function(){ if(redir) window.location.assign(redir); },1200); }
+    function showFail(reason){ clearInterval(timer); clearInterval(cdTimer); loginForm.style.display='none'; startBtn.style.display='none'; devPanel.style.display='none'; donePanel.style.display='none'; failPanel.style.display='block'; hint.style.display='none'; failMsg.textContent=reason||'GitHub login failed. Try again.'; }
 
     document.getElementById('ghCopy').addEventListener('click',function(){
       var b=this; var t=codeEl.textContent;
@@ -286,7 +286,7 @@ button.gh-ghost { background: #172233; color: #ecf2ff; border: 1px solid #34445c
     });
     document.getElementById('ghCancel').addEventListener('click',function(){ if(id) post({id:id},'/auth/github/device/cancel'); showLogin(); });
 
-    function countdown(from){ var left=from||900; expEl.textContent=left; countdown=setInterval(function(){ left--; if(left<=0){ clearInterval(countdown); expEl.textContent='0'; } else expEl.textContent=left; },1000); }
+    function countdown(from){ var left=from||900; expEl.textContent=left; cdTimer=setInterval(function(){ left--; if(left<=0){ clearInterval(cdTimer); expEl.textContent='0'; } else expEl.textContent=left; },1000); }
 
     function poll(){
       if(!id) return;
@@ -305,12 +305,12 @@ button.gh-ghost { background: #172233; color: #ecf2ff; border: 1px solid #34445c
           id=d.id; url=d.verification_uri||'https://github.com/login/device';
           codeEl.textContent=d.user_code||'----';
           linkEl.textContent=url.replace(/^https?:\/\//,''); linkEl.href=url;
-          startBtn.disabled=false; startBtn.textContent='Sign in with GitHub';
+          started=true;
           showPanel();
           countdown(d.expires_in||900);
           poll();
         });
-      }).catch(function(){ startBtn.disabled=false; startBtn.textContent='Sign in with GitHub'; showLogin(); });
+      }).catch(function(e){ window.__gherr=(e&&e.stack)||String(e); startBtn.disabled=false; startBtn.textContent='Sign in with GitHub'; if(started){ showFail('Could not complete the sign-in.'); } else { showLogin(); } });
     });
   })();
   </script>
