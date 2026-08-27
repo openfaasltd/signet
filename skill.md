@@ -2,9 +2,10 @@
 
 Signet is a lightweight OpenID Connect provider for agents and automation. It
 stands in for a full IdP (Keycloak, Auth0) in demos, integration tests, and
-single-node clusters. It is deliberately small: ES256, two grants, no refresh
-tokens. It is a development/demo identity provider — do not use it for
-production credentials.
+single-node clusters, and is small enough to operate in constrained
+deployments. It is deliberately small: ES256, two grants, no refresh tokens.
+Hardening is built in — optional AES-256 at-rest encryption, a chart-managed
+admin token, and (optionally) GitHub identity federation.
 
 ## Endpoints
 
@@ -89,11 +90,14 @@ Flags: `--url`, `--token` (and `--token-file`).
 
 ### Bootstrap / seed admin
 
-On first start (empty state), signet should generate the signing key, generate
-a management token, create a seed admin user, and print the token + admin
-password **once** to stdout. For deterministic e2e, allow `--admin-token` and
-`--admin-password` flags (or env) so a test knows them without scraping logs.
-This mirrors slicer's Bearer-token-from-file model.
+On first start (empty state), signet generates the signing key and, absent an
+operator-supplied token, generates a management token and prints it **once**
+to stdout. The Helm path does **not** rely on that log line: the chart
+creates an `<release>-admin-token` Secret and mounts it as a file consumed via
+`--admin-token-file`, so the operator always retrieves it with
+`kubectl get secret <release>-admin-token -n openfaas -o jsonpath='{.data.admin-token}' | base64 -d`.
+This is the slicer Bearer-token-from-file model and avoids an unpullable
+first-run token.
 
 ### State dir
 
@@ -115,15 +119,14 @@ with an appropriate network-backed PVC.
 - **Protected files, not chat.** When a credential must be shared, write it to
   a `chmod 600` file and pass the **path**, not the value. Never put a secret
   in retained mail, a commit, or a log line.
-- **Encryption at rest (optional).** Plaintext at rest is acceptable for a
-  dev/demo IdP **only** because it is not for production. To harden, run with a
-  32-byte AES-256 master key (a plain file; in Kubernetes a Secret mounted at
-  a path). With a master key present, `config.json`, `signet.key`, and
-  `admin-token` are stored as AES-256-GCM envelopes (`SIGNET-SEALED-v1`).
-  Without one they stay plaintext (0600, UNIX perms). The master key is never
-  written to the state dir, so a volume-only exfiltration (backup, snapshot,
-  image layer) yields ciphertext. It does **not** protect against an attacker
-  who can read both the master key file and the state volume.
+- **Encryption at rest.** Run with a 32-byte AES-256 master key (a plain
+  file; in Kubernetes a Secret mounted at a path). With a master key present,
+  `config.json`, `signet.key`, and `admin-token` are stored as AES-256-GCM
+  envelopes (`SIGNET-SEALED-v1`). Without one they are plaintext (0600, UNIX
+  perms) — acceptable when the state dir itself is protected. The master key
+  is never written to the state dir, so a volume-only exfiltration (backup,
+  snapshot, image layer) yields ciphertext. It does **not** protect against an
+  attacker who can read both the master key file and the state volume.
 - **Master key is a file, never an env var.** The Helm chart
   (`chart/signet`) generates a random master key on install (or honours
   `.Values.masterKey`), ships it as a Kubernetes Secret, mounts it as a file,

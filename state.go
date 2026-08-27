@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -26,6 +27,7 @@ type Store struct {
 	Issuer     string
 	Users      []User
 	Clients    []Client
+	GitHub     *GitHubOAuth
 	adminToken string
 	key        *ecdsa.PrivateKey
 	seal       *sealStore // optional: encrypts config.json at rest, nil = plaintext
@@ -47,6 +49,33 @@ func LoadOrCreateStore(dir, issuer string, seed *Config) (*Store, error) {
 // Secret) so that exfiltrating the state directory alone yields ciphertext.
 func LoadOrCreateStoreWithMasterKey(dir, issuer string, seed *Config, masterKeyFile string) (*Store, error) {
 	return loadOrCreateStore(dir, issuer, seed, masterKeyFile)
+}
+
+// LoadOrCreateStoreManaged is like LoadOrCreateStoreWithMasterKey but, when
+// adminTokenFile is set, treats that file as the authoritative management
+// token instead of generating one inside the state dir. This is intended for
+// the Helm path, where the chart creates an admin-token Secret and mounts it
+// as a file so the operator can always retrieve it
+// (kubectl get secret ... -o jsonpath='{.data.admin-token}' | base64 -d)
+// instead of relying on a first-run log line.
+func LoadOrCreateStoreManaged(dir, issuer string, seed *Config, masterKeyFile, adminTokenFile string) (*Store, error) {
+	s, err := loadOrCreateStore(dir, issuer, seed, masterKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	if adminTokenFile == "" {
+		return s, nil
+	}
+	data, err := os.ReadFile(adminTokenFile)
+	if err != nil {
+		return nil, fmt.Errorf("read admin token file %s: %w", adminTokenFile, err)
+	}
+	tok := strings.TrimSpace(string(data))
+	if tok == "" {
+		return nil, fmt.Errorf("admin token file %s is empty", adminTokenFile)
+	}
+	s.adminToken = tok
+	return s, nil
 }
 
 func loadOrCreateStore(dir, issuer string, seed *Config, masterKeyFile string) (*Store, error) {
@@ -85,6 +114,7 @@ func loadOrCreateStore(dir, issuer string, seed *Config, masterKeyFile string) (
 		if seed != nil {
 			cfg.Users = seed.Users
 			cfg.Clients = seed.Clients
+			cfg.GitHub = seed.GitHub
 			if seed.Issuer != "" {
 				cfg.Issuer = seed.Issuer
 			}
@@ -95,6 +125,7 @@ func loadOrCreateStore(dir, issuer string, seed *Config, masterKeyFile string) (
 		s.Issuer = cfg.Issuer
 		s.Users = cfg.Users
 		s.Clients = cfg.Clients
+		s.GitHub = cfg.GitHub
 		return s, nil
 	}
 	if err != nil {
@@ -120,7 +151,16 @@ func loadOrCreateStore(dir, issuer string, seed *Config, masterKeyFile string) (
 	s.Issuer = cfg.Issuer
 	s.Users = cfg.Users
 	s.Clients = cfg.Clients
+	s.GitHub = cfg.GitHub
 	return s, nil
+}
+
+// GitHubOAuthCfg returns the federated login configuration, or nil if
+// disabled.
+func (s *Store) GitHubOAuthCfg() *GitHubOAuth {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.GitHub
 }
 
 // Key returns the ES256 signing key.
@@ -290,7 +330,7 @@ func (s *Store) RemoveClient(id string) error {
 
 // persistLocked writes config.json atomically. Caller must hold the write lock.
 func (s *Store) persistLocked() error {
-	cfg := Config{Issuer: s.Issuer, Users: s.Users, Clients: s.Clients}
+	cfg := Config{Issuer: s.Issuer, Users: s.Users, Clients: s.Clients, GitHub: s.GitHub}
 	return s.persistConfig(cfg)
 }
 

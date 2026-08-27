@@ -239,7 +239,6 @@ func TestPlaintextModeDoesNotSealSigningKeyOrAdminToken(t *testing.T) {
 	}
 }
 
-
 func TestEncryptedAtRestFailsClosedOnPlaintext(t *testing.T) {
 	dir := t.TempDir()
 	// Create a plaintext store first.

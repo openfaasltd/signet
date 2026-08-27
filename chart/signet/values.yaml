@@ -22,10 +22,16 @@ config: |
     ]
   }
 
-# Master key that encrypts config.json at rest. Leave empty to have the chart
-# generate a random 32-byte key on install. NEVER pass via env var; it is
-# mounted as a file and consumed via --master-key-file.
+# Master key that encrypts config.json, signet.key and admin-token at rest.
+# Leave empty to have the chart generate a random 32-byte key on install. NEVER
+# pass via env var; it is mounted as a file and consumed via --master-key-file.
 masterKey: ""
+
+# Admin (management) token, created by the chart as a retrievable Secret and
+# mounted as a file via --admin-token-file. The operator can always retrieve it
+# rather than scraping a first-run log. Leave empty to have the chart generate
+# a random one on install.
+adminToken: ""
 
 license:
   # Set to true and provide secretName + a `license` key (file contents) to

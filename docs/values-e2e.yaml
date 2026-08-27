@@ -1,0 +1,30 @@
+# E2E sandbox overrides for the signet chart. Not for release.
+image:
+  repository: ttl.sh/signet-e2e
+  tag: "3h"
+  pullPolicy: IfNotPresent
+
+issuer: "http://signet.openfaas.svc:8080"
+
+config: |
+  {
+    "issuer": "http://signet.openfaas.svc:8080",
+    "users": [
+      { "username": "admin", "password": "secret", "subject": "admin", "name": "Signet Admin", "email": "admin@example.com", "groups": ["admin"] }
+    ],
+    "clients": [
+      { "id": "openfaas", "secret": "openfaas-secret", "redirect_urls": ["http://127.0.0.1:3000/callback"] }
+    ]
+  }
+
+masterKey: ""
+
+license:
+  enabled: true
+  secretName: "signet-license"
+  license: "SET_VIA_HELM_SET"
+
+service:
+  type: NodePort
+  port: 8080
+  nodePort: 30080

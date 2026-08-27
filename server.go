@@ -14,18 +14,20 @@ import (
 )
 
 type Server struct {
-	store *Store
-	codes map[string]authCode
-	mu    chan struct{} // serialises code-map access
+	store  *Store
+	codes  map[string]authCode
+	mu     chan struct{} // serialises code-map and device-map access
+	ghDevs map[string]*githubDevice
 }
 
 type authCode struct {
-	ClientID, RedirectURI, Subject, Nonce, CodeChallenge string
-	Expires                                              time.Time
+	ClientID, RedirectURI, Subject, Nonce, CodeChallenge, Name, Email string
+	Groups                                                            []string
+	Expires                                                           time.Time
 }
 
 func NewServer(store *Store) *Server {
-	return &Server{store: store, codes: map[string]authCode{}, mu: make(chan struct{}, 1)}
+	return &Server{store: store, codes: map[string]authCode{}, mu: make(chan struct{}, 1), ghDevs: map[string]*githubDevice{}}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -36,6 +38,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/jwks.json", s.jwks)
 	mux.HandleFunc("/authorize", s.authorize)
 	mux.HandleFunc("/token", s.token)
+	mux.HandleFunc("/auth/github", s.githubLogin)
+	mux.HandleFunc("/auth/github/status/", s.githubStatus)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.Handle("/admin/", s.adminHandler())
 	return mux
@@ -125,6 +129,9 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := loginData{Action: r.URL.RequestURI(), ClientID: client.ID, Scope: query.Get("scope"), Username: query.Get("login_hint")}
+	if gh := s.store.GitHubOAuthCfg(); gh.Enabled() {
+		data.GitHubLink = "/auth/github?" + query.Encode()
+	}
 	if r.Method == http.MethodPost {
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, "invalid login", http.StatusBadRequest)
@@ -162,7 +169,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	s.login(w, data)
 }
 
-type loginData struct{ Action, ClientID, Scope, Username, Error string }
+type loginData struct{ Action, ClientID, Scope, Username, Error, GitHubLink string }
 
 var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 <html lang="en">
@@ -202,6 +209,7 @@ button:hover { background: #b8e3ff; }
     <label>Password<input type="password" name="password" autocomplete="current-password"></label>
     <button type="submit">Sign in</button>
   </form>
+  {{if .GitHubLink}}<p style="text-align:center;margin:18px 0 0;"><a style="background:#6e5494;" href="{{.GitHubLink}}">Sign in with GitHub</a></p>{{end}}
 </main>
 </body>
 </html>`))
@@ -271,9 +279,13 @@ func (s *Server) token(w http.ResponseWriter, r *http.Request) {
 		s.oauthError(w, "invalid_grant", "PKCE verification failed")
 		return
 	}
-	user, _ := s.store.UserBySubject(entry.Subject)
+	user, found := s.store.UserBySubject(entry.Subject)
+	name, email, groups := entry.Name, entry.Email, entry.Groups
+	if found && (user.Name != "" || user.Email != "" || len(user.Groups) > 0) {
+		name, email, groups = user.Name, user.Email, user.Groups
+	}
 	now := time.Now()
-	claims := map[string]any{"iss": s.store.Issuer, "sub": entry.Subject, "aud": []string{client.ID}, "iat": now.Unix(), "exp": now.Add(time.Hour).Unix(), "auth_time": now.Unix(), "name": user.Name, "email": user.Email, "groups": user.Groups}
+	claims := map[string]any{"iss": s.store.Issuer, "sub": entry.Subject, "aud": []string{client.ID}, "iat": now.Unix(), "exp": now.Add(time.Hour).Unix(), "auth_time": now.Unix(), "name": name, "email": email, "groups": groups}
 	if entry.Nonce != "" {
 		claims["nonce"] = entry.Nonce
 	}

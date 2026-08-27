@@ -30,3 +30,11 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- randAlphaNum 32 -}}
 {{- end -}}
 {{- end -}}
+
+{{- define "signet.adminToken" -}}
+{{- if .Values.adminToken -}}
+{{- .Values.adminToken -}}
+{{- else -}}
+{{- randAlphaNum 43 -}}
+{{- end -}}
+{{- end -}}

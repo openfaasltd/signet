@@ -30,6 +30,8 @@ spec:
             - {{ .Values.storage.mountPath }}
             - --master-key-file
             - /var/run/secrets/signet-master/master.key
+            - --admin-token-file
+            - /var/run/secrets/signet-admin/admin-token
             {{- if .Values.license.enabled }}
             - --license-file
             - /var/run/secrets/signet-license/license
@@ -51,6 +53,9 @@ spec:
               readOnly: true
             - name: master
               mountPath: /var/run/secrets/signet-master
+              readOnly: true
+            - name: admin
+              mountPath: /var/run/secrets/signet-admin
               readOnly: true
             - name: state
               mountPath: {{ .Values.storage.mountPath }}
@@ -74,6 +79,12 @@ spec:
             items:
               - key: master.key
                 path: master.key
+        - name: admin
+          secret:
+            secretName: {{ printf "%s-admin-token" (include "signet.fullname" .) }}
+            items:
+              - key: admin-token
+                path: admin-token
         - name: state
           persistentVolumeClaim:
             claimName: {{ printf "%s-state" (include "signet.fullname" .) }}

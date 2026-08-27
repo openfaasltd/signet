@@ -27,6 +27,7 @@ func runServe(args []string) error {
 	license := fs.String("license", "", "Literal license value")
 	licenseFile := fs.String("license-file", "", "Path to a file containing the license")
 	masterKey := fs.String("master-key-file", "", "Path to a 32-byte AES-256 master key that encrypts config.json, signet.key and admin-token at rest (empty = plaintext)")
+	adminToken := fs.String("admin-token-file", "", "Path to a file whose contents are used as the admin token (e.g. a mounted Secret), instead of generating one")
 	fs.Parse(args)
 
 	// License is required to run the daemon.
@@ -44,7 +45,7 @@ func runServe(args []string) error {
 	if err != nil {
 		return err
 	}
-	store, err := LoadOrCreateStoreWithMasterKey(*stateDir, *issuer, seed, *masterKey)
+	store, err := LoadOrCreateStoreManaged(*stateDir, *issuer, seed, *masterKey, *adminToken)
 	if err != nil {
 		return err
 	}
