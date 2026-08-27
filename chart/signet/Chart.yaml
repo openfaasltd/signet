@@ -1,0 +1,9 @@
+apiVersion: v2
+name: signet
+description: Signet OIDC provider - lightweight OpenID Connect provider for agents and automation
+type: application
+version: 0.1.0
+appVersion: "0.0.1"
+maintainers:
+  - name: openfaas
+    email: contact@openfaas.com

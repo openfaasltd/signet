@@ -115,8 +115,20 @@ with an appropriate network-backed PVC.
 - **Protected files, not chat.** When a credential must be shared, write it to
   a `chmod 600` file and pass the **path**, not the value. Never put a secret
   in retained mail, a commit, or a log line.
-- **Plaintext at rest is acceptable** for a dev/demo IdP — but only because it
-  is explicitly not for production.
+- **Encryption at rest (optional).** Plaintext at rest is acceptable for a
+  dev/demo IdP **only** because it is not for production. To harden, run with a
+  32-byte AES-256 master key (a plain file; in Kubernetes a Secret mounted at
+  a path). With a master key present, `config.json`, `signet.key`, and
+  `admin-token` are stored as AES-256-GCM envelopes (`SIGNET-SEALED-v1`).
+  Without one they stay plaintext (0600, UNIX perms). The master key is never
+  written to the state dir, so a volume-only exfiltration (backup, snapshot,
+  image layer) yields ciphertext. It does **not** protect against an attacker
+  who can read both the master key file and the state volume.
+- **Master key is a file, never an env var.** The Helm chart
+  (`chart/signet`) generates a random master key on install (or honours
+  `.Values.masterKey`), ships it as a Kubernetes Secret, mounts it as a file,
+  and passes the path via `--master-key-file`. It is kept across upgrades
+  (`helm.sh/resource-policy: keep`) and survives uninstall.
 
 ## Consistency — the thing that breaks the demo
 
@@ -173,4 +185,4 @@ PVC as a deliberate key rotation and verify consumers have refreshed JWKS.
 - **No hot-reload.** Config changes require a pod restart.
 - **`access_token` == `id_token`.** Same JWT for both. Fine for a demo; a real
   access token would differ.
-- **No refresh tokens, no admin API, no state dir** yet (see Target above).
+- **No refresh tokens.** (See Target below.)

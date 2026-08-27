@@ -73,6 +73,19 @@ spec:
     requests:
       storage: 1Gi
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: signet-master
+  namespace: openfaas
+type: Opaque
+stringData:
+  # A 32-byte AES-256 key (base64/padded text is trimmed). Generate with:
+  #   head -c 32 /dev/urandom > master.key  (or use openssl rand -hex / base64)
+  # DO NOT commit this value. Store the real key in your vault and render it
+  # here. It encrypts config.json at rest and is never written to the PVC.
+  master.key: "00000000000000000000000000000000"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -99,7 +112,7 @@ spec:
         - name: signet
           image: docker.io/alexellis2/signet:v0.0.2
           imagePullPolicy: IfNotPresent
-          args: ["up", "--listen", ":8080", "--config", "/etc/signet/config.json", "--state-dir", "/var/lib/signet", "--license-file", "/var/run/secrets/signet-license/license"]
+          args: ["up", "--listen", ":8080", "--config", "/etc/signet/config.json", "--state-dir", "/var/lib/signet", "--master-key-file", "/var/run/secrets/signet-master/master.key", "--license-file", "/var/run/secrets/signet-license/license"]
           ports:
             - containerPort: 8080
           readinessProbe:
@@ -112,6 +125,9 @@ spec:
               readOnly: true
             - name: key
               mountPath: /var/lib/signet
+            - name: master
+              mountPath: /var/run/secrets/signet-master
+              readOnly: true
             - name: license
               mountPath: /var/run/secrets/signet-license
               readOnly: true
@@ -122,6 +138,12 @@ spec:
         - name: key
           persistentVolumeClaim:
             claimName: signet-state
+        - name: master
+          secret:
+            secretName: signet-master
+            items:
+              - key: master.key
+                path: master.key
         - name: license
           secret:
             secretName: openfaas-license

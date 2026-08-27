@@ -4,8 +4,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/subtle"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -25,13 +28,28 @@ type Store struct {
 	Clients    []Client
 	adminToken string
 	key        *ecdsa.PrivateKey
+	seal       *sealStore // optional: encrypts config.json at rest, nil = plaintext
 }
 
 // LoadOrCreateStore loads the state from dir, or initialises it on first run.
 // If seed is non-nil and the state directory is empty, the seed config is
 // imported (users + clients). A signing key and admin token are generated if
-// absent.
+// absent. Files are stored in plaintext, relying on OS file permissions.
 func LoadOrCreateStore(dir, issuer string, seed *Config) (*Store, error) {
+	return loadOrCreateStore(dir, issuer, seed, "")
+}
+
+// LoadOrCreateStoreWithMasterKey is like LoadOrCreateStore but config.json is
+// encrypted at rest with a key derived from masterKeyFile (a 32-byte AES-256
+// key). If masterKeyFile is empty, behaviour matches LoadOrCreateStore
+// (plaintext). The master key itself is never written into the state dir; it
+// is expected to be mounted from an external secret (e.g. a Kubernetes
+// Secret) so that exfiltrating the state directory alone yields ciphertext.
+func LoadOrCreateStoreWithMasterKey(dir, issuer string, seed *Config, masterKeyFile string) (*Store, error) {
+	return loadOrCreateStore(dir, issuer, seed, masterKeyFile)
+}
+
+func loadOrCreateStore(dir, issuer string, seed *Config, masterKeyFile string) (*Store, error) {
 	if dir == "" {
 		dir = "signet-state"
 	}
@@ -41,26 +59,26 @@ func LoadOrCreateStore(dir, issuer string, seed *Config) (*Store, error) {
 
 	s := &Store{dir: dir, Issuer: issuer}
 
-	key, err := LoadOrCreateSigningKey(filepath.Join(dir, "signet.key"))
+	sseal, err := newSealStore(masterKeyFile, "")
+	if err != nil {
+		return nil, err
+	}
+	s.seal = sseal
+
+	key, err := s.ensureSigningKey()
 	if err != nil {
 		return nil, err
 	}
 	s.key = key
 
-	tokenPath := filepath.Join(dir, "admin-token")
-	token, err := os.ReadFile(tokenPath)
-	if os.IsNotExist(err) {
-		token = []byte(generateToken(24))
-		if werr := os.WriteFile(tokenPath, token, 0600); werr != nil {
-			return nil, werr
-		}
-	} else if err != nil {
+	token, err := s.ensureAdminToken()
+	if err != nil {
 		return nil, err
 	}
-	s.adminToken = string(token)
+	s.adminToken = token
 
 	configPath := filepath.Join(dir, "config.json")
-	data, err := os.ReadFile(configPath)
+	raw, err := os.ReadFile(configPath)
 	if os.IsNotExist(err) {
 		// First run: import the seed (if any) or start empty.
 		cfg := Config{Issuer: issuer}
@@ -82,8 +100,18 @@ func LoadOrCreateStore(dir, issuer string, seed *Config) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	opened, err := s.seal.Open(raw, s.configAAD())
+	if err != nil {
+		if err == ErrNotSealed {
+			return nil, fmt.Errorf("%s: config is plaintext but sealing is enabled (start without --master-key-file, or migrate the store)", configPath)
+		}
+		if err == ErrSealed {
+			return nil, fmt.Errorf("%s: config is sealed but no master key was provided (start with --master-key-file)", configPath)
+		}
+		return nil, fmt.Errorf("open sealed config %s: %w", configPath, err)
+	}
 	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	if err := json.Unmarshal(opened, &cfg); err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 	if cfg.Issuer == "" {
@@ -271,12 +299,113 @@ func (s *Store) persistConfig(cfg Config) error {
 	if err != nil {
 		return err
 	}
+	sealed, err := s.seal.Seal(data, s.configAAD())
+	if err != nil {
+		return err
+	}
 	path := filepath.Join(s.dir, "config.json")
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
+	if err := os.WriteFile(tmp, sealed, 0600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// configAAD returns the authenticated-extra-data binding for config.json so a
+// sealed file cannot be replayed under a different path.
+func (s *Store) configAAD() []byte {
+	return []byte("signet.config:" + filepath.Clean(filepath.Join(s.dir, "config.json")))
+}
+
+func (s *Store) signingKeyAAD() []byte {
+	return []byte("signet.signingkey:" + filepath.Clean(filepath.Join(s.dir, "signet.key")))
+}
+
+func (s *Store) adminTokenAAD() []byte {
+	return []byte("signet.admintoken:" + filepath.Clean(filepath.Join(s.dir, "admin-token")))
+}
+
+// ensureSigningKey loads the ES256 signing key from signet.key, or generates,
+// persists (sealed when a master key is configured), and returns a fresh one
+// if absent. On-disk data is read through the seal store so a plaintext key on
+// disk is never silently accepted when sealing is enabled.
+func (s *Store) ensureSigningKey() (*ecdsa.PrivateKey, error) {
+	path := filepath.Join(s.dir, "signet.key")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		key, genErr := NewSigningKey()
+		if genErr != nil {
+			return nil, genErr
+		}
+		der, marshalErr := x509.MarshalECPrivateKey(key)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		plain := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+		toWrite, sealErr := s.seal.Seal(plain, s.signingKeyAAD())
+		if sealErr != nil {
+			return nil, sealErr
+		}
+		if writeErr := os.WriteFile(path, toWrite, 0600); writeErr != nil {
+			return nil, writeErr
+		}
+		return key, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	opened, err := s.seal.Open(data, s.signingKeyAAD())
+	if err != nil {
+		if err == ErrNotSealed {
+			return nil, fmt.Errorf("%s: signing key is plaintext but sealing is enabled (start without --master-key-file, or re-seal the key)", path)
+		}
+		if err == ErrSealed {
+			return nil, fmt.Errorf("%s: signing key is sealed but no master key was provided (start with --master-key-file)", path)
+		}
+		return nil, fmt.Errorf("open sealed signing key %s: %w", path, err)
+	}
+	block, _ := pem.Decode(opened)
+	if block == nil {
+		return nil, errors.New("signing key is not PEM encoded")
+	}
+	key, err := x509.ParseECPrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse signing key: %w", err)
+	}
+	return key, nil
+}
+
+// ensureAdminToken loads the management token from admin-token, or generates,
+// persists (sealed when a master key is configured), and returns a fresh one
+// if absent.
+func (s *Store) ensureAdminToken() (string, error) {
+	path := filepath.Join(s.dir, "admin-token")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		token := []byte(generateToken(24))
+		toWrite, sealErr := s.seal.Seal(token, s.adminTokenAAD())
+		if sealErr != nil {
+			return "", sealErr
+		}
+		if writeErr := os.WriteFile(path, toWrite, 0600); writeErr != nil {
+			return "", writeErr
+		}
+		return string(token), nil
+	}
+	if err != nil {
+		return "", err
+	}
+	opened, err := s.seal.Open(data, s.adminTokenAAD())
+	if err != nil {
+		if err == ErrNotSealed {
+			return "", fmt.Errorf("%s: admin token is plaintext but sealing is enabled (start without --master-key-file, or re-seal)", path)
+		}
+		if err == ErrSealed {
+			return "", fmt.Errorf("%s: admin token is sealed but no master key was provided (start with --master-key-file)", path)
+		}
+		return "", fmt.Errorf("open sealed admin token %s: %w", path, err)
+	}
+	return string(opened), nil
 }
 
 // generateToken returns a random URL-safe token of the given byte length.

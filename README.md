@@ -43,6 +43,16 @@ signet up --license-file ./license.txt --config signet.json \
   --issuer http://127.0.0.1:8080 --state-dir ./signet-state
 ```
 
+Optionally encrypt `config.json`, `signet.key`, and `admin-token` at rest with
+a 32-byte AES-256 master key:
+
+```sh
+head -c 32 /dev/urandom > ./master.key   # exactly 32 bytes
+signet up --license-file ./license.txt --config signet.json \
+  --issuer http://127.0.0.1:8080 --state-dir ./signet-state \
+  --master-key-file ./master.key
+```
+
 The ES256 signing key and provisioned users and clients are kept in the state
 directory. Mount it on persistent storage in Kubernetes. A ready-to-edit
 single-replica deployment is provided in `k8s/signet.yaml`; it uses the
@@ -58,11 +68,20 @@ OIDC Issuer configuration with the same external issuer URL, for example
 `http://192.168.1.20:30080`. The internal Service is not the issuer URL in
 this topology.
 
-Discovery is available at:
+The recommended Kubernetes install is the Helm chart in `chart/signet`:
 
-```text
-http://127.0.0.1:8080/.well-known/openid-configuration
+```sh
+helm install signet chart/signet --namespace openfaas --create-namespace \
+  --set-json 'config=$(cat ./signet.json | jq -c)' \
+  --set license.license="$(cat ./license.txt)"
 ```
+
+The chart generates a random 32-byte master key on install (or honours an
+operator-supplied `.Values.masterKey`), ships it as a **Kubernetes Secret
+mounted as a file** — never as an environment variable — and passes its path
+via `--master-key-file`. The key is stored decryptable against a volume-only
+exfiltration (backup, PVC snapshot, image layer); it does not protect against
+an attacker who can read both the master key file and the state volume.
 
 This is a development/demo identity provider. Do not expose it to an
 untrusted network or use it for production credentials.

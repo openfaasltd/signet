@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "signet.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "signet.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "signet.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "signet.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: signet
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - up
+            - --listen
+            - {{ .Values.listen }}
+            - --config
+            - /etc/signet/config.json
+            - --state-dir
+            - {{ .Values.storage.mountPath }}
+            - --master-key-file
+            - /var/run/secrets/signet-master/master.key
+            {{- if .Values.license.enabled }}
+            - --license-file
+            - /var/run/secrets/signet-license/license
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          securityContext:
+            runAsUser: {{ .Values.securityContext.runAsUser }}
+            runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/signet
+              readOnly: true
+            - name: master
+              mountPath: /var/run/secrets/signet-master
+              readOnly: true
+            - name: state
+              mountPath: {{ .Values.storage.mountPath }}
+            {{- if .Values.license.enabled }}
+            - name: license
+              mountPath: /var/run/secrets/signet-license
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ printf "%s-config" (include "signet.fullname" .) }}
+            items:
+              - key: config.json
+                path: config.json
+        - name: master
+          secret:
+            secretName: {{ printf "%s-master" (include "signet.fullname" .) }}
+            items:
+              - key: master.key
+                path: master.key
+        - name: state
+          persistentVolumeClaim:
+            claimName: {{ printf "%s-state" (include "signet.fullname" .) }}
+        {{- if .Values.license.enabled }}
+        - name: license
+          secret:
+            secretName: {{ .Values.license.secretName }}
+            items:
+              - key: license
+                path: license
+        {{- end }}
