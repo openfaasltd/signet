@@ -4,14 +4,38 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"time"
 )
+
+//go:embed web/*
+var webFS embed.FS
+
+// pageTemplates are the HTML pages served from the embedded web assets.
+var pageTemplates = template.Must(template.ParseFS(webFS, "web/home.html", "web/login.html"))
+
+// noCache disables content caching so a newly shipped binary is always
+// reflected on the next reload (no stale etags/browser cache).
+func noCache(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		h.ServeHTTP(w, r)
+	})
+}
+
+// cspPage applies a strict Content Security Policy (no inline scripts or
+// styles) plus no-cache to a page response.
+func cspPage(w http.ResponseWriter) {
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+}
 
 type Server struct {
 	store  *Store
@@ -43,6 +67,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/auth/github/device/cancel", s.githubDeviceCancel)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.Handle("/admin/", s.adminHandler())
+	webRoot, err := fs.Sub(webFS, "web")
+	if err != nil {
+		panic(err)
+	}
+	mux.Handle("/static/", http.StripPrefix("/static/", noCache(http.FileServer(http.FS(webRoot)))))
 	return mux
 }
 
@@ -50,50 +79,15 @@ type homeData struct {
 	Issuer string
 }
 
-var homeTemplate = template.Must(template.New("home").Parse(`<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Signet by OpenFaaS Ltd</title>
-<style>
-:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #10141c; color: #ecf2ff; }
-body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: radial-gradient(circle at top left, #273c58, transparent 42%), #10141c; }
-main { width: min(680px, calc(100% - 48px)); padding: 52px; border: 1px solid #34445c; border-radius: 20px; background: rgba(16, 20, 28, .8); box-shadow: 0 24px 80px #0007; }
-.brand { display: flex; align-items: center; gap: 16px; }
-.mark { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: #9dd6ff; color: #102033; font-size: 23px; font-weight: 800; }
-h1 { margin: 0; font-size: clamp(2.2rem, 6vw, 3.6rem); letter-spacing: -.06em; }
-.byline { margin-left: .35em; color: #9db1cd; font-size: .38em; font-weight: 600; letter-spacing: -.02em; white-space: nowrap; }
-p { color: #b8c7dc; line-height: 1.6; }
-.issuer { margin: 28px 0; padding: 15px 17px; border-radius: 10px; background: #172233; color: #dbeaff; font-family: ui-monospace, SFMono-Regular, monospace; overflow-wrap: anywhere; }
-nav { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
-a { color: #102033; background: #9dd6ff; padding: 11px 15px; border-radius: 9px; text-decoration: none; font-weight: 700; }
-a.secondary { color: #c5d8f2; background: transparent; border: 1px solid #4a607d; }
-footer { margin-top: 38px; font-size: .88rem; color: #8294ac; }
-</style>
-</head>
-<body>
-<main>
-  <div class="brand"><div class="mark">S</div><h1>Signet<span class="byline">by OpenFaaS Ltd</span></h1></div>
-  <p>A lightweight OpenID Connect provider for agents and automation.</p>
-  <div class="issuer">{{.Issuer}}</div>
-  <nav>
-    <a href="/.well-known/openid-configuration">OpenID Connect metadata</a>
-    <a class="secondary" href="/.well-known/jwks.json">JWKS</a>
-    <a class="secondary" href="/healthz">Health</a>
-  </nav>
-  <footer>OpenID Connect · ES256 signing · PKCE (S256)</footer>
-</main>
-</body>
-</html>`))
-
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
+	cspPage(w)
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = homeTemplate.Execute(w, homeData{Issuer: s.store.Issuer})
+	_ = pageTemplates.ExecuteTemplate(w, "home.html", homeData{Issuer: s.store.Issuer})
 }
 
 func (s *Server) discovery(w http.ResponseWriter, _ *http.Request) {
@@ -141,7 +135,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 			"code_challenge_method": query.Get("code_challenge_method"),
 		})
 		data.GitHubEnabled = true
-		data.GitHubParams = template.JS(params)
+		data.GitHubParamsB64 = base64.StdEncoding.EncodeToString(params)
 	}
 	if r.Method == http.MethodPost {
 		if err := r.ParseForm(); err != nil {
@@ -183,146 +177,14 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 type loginData struct {
 	Action, ClientID, Scope, Username, Error string
 	GitHubEnabled                            bool
-	GitHubParams                             template.JS
+	GitHubParamsB64                          string
 }
 
-var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in · Signet by OpenFaaS Ltd</title>
-<style>
-:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
-* { box-sizing: border-box; }
-body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at top left, #273c58, transparent 42%), #10141c; color: #ecf2ff; }
-main { width: min(100%, 440px); padding: 40px; border: 1px solid #34445c; border-radius: 16px; background: rgba(16, 20, 28, .88); box-shadow: 0 28px 76px #0006; }
-.brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }
-.mark { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: #9dd6ff; color: #102033; font-size: 16px; font-weight: 800; }
-.wordmark { font-size: 1rem; font-weight: 800; letter-spacing: -.04em; }
-.byline { margin-left: .45em; color: #9db1cd; font-size: .68rem; font-weight: 600; letter-spacing: -.01em; }
-h1 { margin: 0; font-size: clamp(1.8rem, 7vw, 2.25rem); letter-spacing: -.05em; }
-.intro { margin: 8px 0 26px; color: #b8c7dc; line-height: 1.5; }
-.client { color: #ecf2ff; font-weight: 700; }
-form { display: grid; gap: 14px; }
-label { display: grid; gap: 8px; color: #c5d8f2; font-size: .92rem; font-weight: 650; }
-input { width: 100%; min-height: 42px; padding: 9px 12px; border: 1px solid #4a607d; border-radius: 8px; outline: none; background: #172233; color: #ecf2ff; font: inherit; }
-input:focus { border-color: #9dd6ff; box-shadow: 0 0 0 3px #9dd6ff2b; }
-button { min-height: 42px; margin-top: 4px; border: 0; border-radius: 8px; background: #9dd6ff; color: #102033; cursor: pointer; font: inherit; font-weight: 800; }
-button:hover { background: #b8e3ff; }
-.error { margin: 0 0 20px; padding: 12px 14px; border: 1px solid #b95768; border-radius: 9px; background: #512934; color: #ffd8de; line-height: 1.45; }
-.divider { display: flex; align-items: center; gap: 12px; color: #8294ac; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; margin: 18px 0 14px; }
-.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: #34445c; }
-.ghblock { display: grid; gap: 12px; }
-.gh-panel { display: none; color: #b8c7dc; font-size: .92rem; line-height: 1.5; }
-.gh-link { color: #9dd6ff; word-break: break-all; }
-.gh-code { text-align: center; background: #0b1017; border: 1px solid #34445c; border-radius: 12px; padding: 14px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 1.5rem; letter-spacing: .24em; color: #9dd6ff; font-weight: 800; margin: 4px 0 2px; }
-.gh-actions { display: flex; gap: 10px; }
-.gh-actions button { flex: 1; min-height: 40px; margin-top: 0; }
-button.gh-ghost { background: #172233; color: #ecf2ff; border: 1px solid #34445c; }
-.gh-status { display: flex; align-items: center; gap: 8px; font-size: .9rem; color: #9db1cd; }
-.ghspin { width: 16px; height: 16px; border: 2px solid #34445c; border-top-color: #9dd6ff; border-radius: 50%; animation: ghspin .8s linear infinite; flex: none; }
-@keyframes ghspin { to { transform: rotate(360deg); } }
-.gh-ok { color: #3fb950; font-weight: 700; }
-.gh-err { color: #f85149; font-weight: 700; }
-.gh-hint { color: #8294ac; font-size: .72rem; text-align: center; }
-</style>
-</head>
-<body>
-<main>
-  <div class="brand"><div class="mark">S</div><div class="wordmark">Signet<span class="byline">by OpenFaaS Ltd</span></div></div>
-  <h1>Sign in</h1>
-  <p class="intro">Sign in to <span class="client">{{.ClientID}}</span>.</p>
-  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
-  <form method="post" action="{{.Action}}">
-    <label>Username<input name="username" value="{{.Username}}" autocomplete="username" autofocus></label>
-    <label>Password<input type="password" name="password" autocomplete="current-password"></label>
-    <button type="submit">Sign in</button>
-  </form>
-  {{if .GitHubEnabled}}
-  <div class="divider">or</div>
-  <div id="ghLogin" class="ghblock">
-    <button type="button" id="ghStart">Sign in with GitHub</button>
-  </div>
-  <div id="ghDevice" class="gh-panel">
-    <div>Open <a class="gh-link" id="ghLink" href="#" target="_blank" rel="noopener">github.com/login/device</a> in a new tab and enter the code:</div>
-    <div class="gh-code" id="ghCode">……</div>
-    <div class="gh-actions">
-      <button type="button" class="gh-ghost" id="ghCopy">Copy</button>
-      <button type="button" class="gh-ghost" id="ghCancel">Cancel</button>
-    </div>
-    <div class="gh-status"><span class="ghspin"></span><span id="ghStatus">Waiting for your authorization…</span></div>
-  </div>
-  <div id="ghDone" class="gh-panel"><div class="gh-status gh-ok">You&rsquo;re signed in</div><div style="color:#b8c7dc">Signet verified your GitHub identity. Opening the app&hellip;</div></div>
-  <div id="ghFail" class="gh-panel"><div class="gh-status gh-err">Sign-in failed</div><div id="ghFailMsg" style="color:#b8c7dc">Could not complete the sign-in.</div></div>
-  <div class="gh-hint" id="ghHint" style="display:none;margin-top:14px">Device code expires in <span id="ghExp">—</span>s.</div>
-  <script>
-  (function(){
-    if(!document.getElementById) return;
-    var enabled = {{.GitHubEnabled}};
-    if(!enabled) return;
-    var P = {{.GitHubParams}};
-    var startBtn=document.getElementById('ghStart');
-    var loginForm=document.querySelector('form');
-    var devPanel=document.getElementById('ghDevice');
-    var donePanel=document.getElementById('ghDone');
-    var failPanel=document.getElementById('ghFail');
-    var codeEl=document.getElementById('ghCode');
-    var linkEl=document.getElementById('ghLink');
-    var expEl=document.getElementById('ghExp');
-    var failMsg=document.getElementById('ghFailMsg');
-    var hint=document.getElementById('ghHint');
-    var id='', url='', timer=null, cdTimer=null, started=false;
-
-    function post(p,path){ return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p||{}),credentials:'same-origin'}); }
-    function showLogin(){ loginForm.style.display=''; startBtn.style.display=''; devPanel.style.display='none'; donePanel.style.display='none'; failPanel.style.display='none'; hint.style.display='none'; }
-    function showPanel(){ loginForm.style.display='none'; startBtn.style.display='none'; failPanel.style.display='none'; donePanel.style.display='none'; devPanel.style.display='block'; hint.style.display=''; }
-    function showDone(redir){ clearInterval(timer); clearInterval(cdTimer); loginForm.style.display='none'; startBtn.style.display='none'; devPanel.style.display='none'; failPanel.style.display='none'; donePanel.style.display='block'; hint.style.display='none'; window.setTimeout(function(){ if(redir) window.location.assign(redir); },1200); }
-    function showFail(reason){ clearInterval(timer); clearInterval(cdTimer); loginForm.style.display='none'; startBtn.style.display='none'; devPanel.style.display='none'; donePanel.style.display='none'; failPanel.style.display='block'; hint.style.display='none'; failMsg.textContent=reason||'GitHub login failed. Try again.'; }
-
-    document.getElementById('ghCopy').addEventListener('click',function(){
-      var b=this; var t=codeEl.textContent;
-      if(navigator.clipboard){ navigator.clipboard.writeText(t).then(function(){ b.textContent='Copied'; setTimeout(function(){b.textContent='Copy';},1200); }).catch(function(){}); }
-    });
-    document.getElementById('ghCancel').addEventListener('click',function(){ if(id) post({id:id},'/auth/github/device/cancel'); showLogin(); });
-
-    function countdown(from){ var left=from||900; expEl.textContent=left; cdTimer=setInterval(function(){ left--; if(left<=0){ clearInterval(cdTimer); expEl.textContent='0'; } else expEl.textContent=left; },1000); }
-
-    function poll(){
-      if(!id) return;
-      post({id:id},'/auth/github/device/status').then(function(r){
-        if(r.status===200){ return r.json().then(function(d){ showDone(d.redirect_url); }); }
-        if(r.status===202){ return r.json().then(function(d){ timer=window.setTimeout(poll,(d.retry_after||5)*1000); }); }
-        showFail(r.status===410? 'The code expired. Start again to get a new one.' : (r.status===403? 'Your GitHub identity is not authorized for this Signet.' : 'GitHub login failed. Try again.'));
-      }).catch(function(){ timer=window.setTimeout(poll,4000); });
-    }
-
-    startBtn.addEventListener('click', function(){
-      startBtn.disabled=true; startBtn.textContent='Starting GitHub…';
-      post(P,'/auth/github/device').then(function(r){
-        return r.json().then(function(d){
-          if(r.status!==200 || !d || !d.id) throw new Error('ghstart');
-          id=d.id; url=d.verification_uri||'https://github.com/login/device';
-          codeEl.textContent=d.user_code||'----';
-          linkEl.textContent=url.replace(/^https?:\/\//,''); linkEl.href=url;
-          started=true;
-          showPanel();
-          countdown(d.expires_in||900);
-          poll();
-        });
-      }).catch(function(e){ window.__gherr=(e&&e.stack)||String(e); startBtn.disabled=false; startBtn.textContent='Sign in with GitHub'; if(started){ showFail('Could not complete the sign-in.'); } else { showLogin(); } });
-    });
-  })();
-  </script>
-  {{end}}
-</main>
-</body>
-</html>`))
-
 func (s *Server) login(w http.ResponseWriter, data loginData) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	cspPage(w)
 	w.Header().Set("Cache-Control", "no-store")
-	_ = loginTemplate.Execute(w, data)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = pageTemplates.ExecuteTemplate(w, "login.html", data)
 }
 
 func (s *Server) token(w http.ResponseWriter, r *http.Request) {

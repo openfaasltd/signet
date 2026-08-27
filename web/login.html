@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Signet by OpenFaaS Ltd</title>
+<link rel="stylesheet" href="/static/app.css">
+{{if .GitHubEnabled}}<meta name="gh-params" content="{{.GitHubParamsB64}}">{{end}}
+</head>
+<body>
+<main class="card">
+  <div class="brand"><div class="mark">S</div><div class="wordmark">Signet<span class="byline">by OpenFaaS Ltd</span></div></div>
+  <h1>Sign in</h1>
+  <p class="intro">Sign in to <span class="client">{{.ClientID}}</span>.</p>
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+
+  <form method="post" action="{{.Action}}" id="loginForm">
+    <label>Username<input name="username" value="{{.Username}}" autocomplete="username" autofocus></label>
+    <label>Password<input type="password" name="password" autocomplete="current-password"></label>
+    <button type="submit">Sign in</button>
+  </form>
+
+  {{if .GitHubEnabled}}
+  <div class="divider">or</div>
+  <div class="ghblock" id="ghLogin">
+    <button type="button" id="ghStart">Sign in with GitHub</button>
+  </div>
+
+  <div class="gh-panel" id="ghDevice">
+    <p class="intro">Open <a class="gh-link" id="ghLink" href="#" target="_blank" rel="noopener">github.com/login/device</a> in a new tab and enter the code:</p>
+    <div class="gh-code" id="ghCode">····</div>
+    <div class="gh-actions">
+      <button type="button" class="gh-ghost" id="ghCopy">Copy</button>
+      <button type="button" class="gh-ghost" id="ghCancel">Cancel</button>
+    </div>
+    <div class="gh-status"><span class="ghspin"></span><span>Waiting for your authorization&#8230;</span></div>
+    <div class="gh-hint" id="ghHint">Device code expires in <span id="ghExp">0:00</span>.</div>
+  </div>
+
+  <div class="gh-panel" id="ghDone">
+    <div class="gh-status gh-ok">You&#8217;re signed in</div>
+    <p class="intro">Signet verified your GitHub identity. Opening the app&#8230;</p>
+  </div>
+  <div class="gh-panel" id="ghFail">
+    <div class="gh-status gh-err">Sign-in failed</div>
+    <p class="intro" id="ghFailMsg">Could not complete the sign-in.</p>
+  </div>
+  {{end}}
+
+  <script src="/static/login.js" defer></script>
+</body>
+</html>

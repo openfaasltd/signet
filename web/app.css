@@ -1,0 +1,51 @@
+:root{
+  --bg:#10141c; --card:#161c28; --card2:#172233; --border:#34445c;
+  --text:#ecf2ff; --text-2:#b8c7dc; --text-3:#9db1cd; --muted:#8294ac;
+  --accent:#9dd6ff; --accent-ink:#102033; --ok:#3fb950; --err:#f85149;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
+  background:radial-gradient(circle at top left, #273c58, transparent 42%), #10141c;
+  color:var(--text); font-family:system-ui,-apple-system,sans-serif;
+}
+.card{
+  width:min(100%,440px); padding:40px; border:1px solid var(--border); border-radius:16px;
+  background:rgba(16,20,28,.92); box-shadow:0 28px 76px #0006;
+}
+.brand{display:flex; align-items:center; gap:10px; margin-bottom:28px}
+.mark{width:30px;height:30px; display:grid; place-items:center; border-radius:8px; background:var(--accent); color:var(--accent-ink); font-size:16px; font-weight:800}
+.wordmark{font-size:1rem; font-weight:800; letter-spacing:-.04em}
+.byline{margin-left:.5em; color:var(--text-3); font-size:.68rem; font-weight:600; letter-spacing:-.01em}
+h1{margin:0 0 6px; font-size:clamp(1.8rem,7vw,2.25rem); letter-spacing:-.05em}
+.intro{margin:8px 0 26px; color:var(--text-2); line-height:1.6}
+.client{color:var(--text); font-weight:700}
+form{display:grid; gap:16px}
+label{display:grid; gap:8px; color:var(--text-3); font-size:.92rem; font-weight:650}
+input{width:100%; min-height:44px; padding:10px 12px; border:1px solid #4a607d; border-radius:8px; outline:none; background:var(--card2); color:var(--text); font:inherit}
+input:focus{border-color:var(--accent); box-shadow:0 0 0 3px #9dd6ff2b}
+button{min-height:44px; border:0; border-radius:8px; background:var(--accent); color:var(--accent-ink); cursor:pointer; font:inherit; font-weight:800}
+button:hover{background:#b8e3ff}
+.error{margin:0 0 20px; padding:12px 14px; border:1px solid #b95768; border-radius:9px; background:#512934; color:#ffd8de; line-height:1.45}
+.divider{display:flex; align-items:center; gap:12px; color:var(--muted); font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; margin:22px 0 16px}
+.divider::before,.divider::after{content:""; flex:1; height:1px; background:var(--border)}
+.ghblock{display:grid; gap:12px}
+.gh-panel{display:none; color:var(--text-2); font-size:.92rem; line-height:1.6}
+.gh-link{color:var(--accent); word-break:break-word; overflow-wrap:anywhere}
+.gh-code{text-align:center; background:#0b1017; border:1px solid var(--border); border-radius:12px; padding:16px; font-family:ui-monospace,SFMono-Regular,monospace; font-size:1.5rem; letter-spacing:.24em; color:var(--accent); font-weight:800; margin:18px 0}
+.gh-actions{display:flex; gap:12px; margin:6px 0 22px}
+.gh-actions a{flex:1; text-align:center; text-decoration:none}
+.gh-actions button{flex:1; min-height:42px; margin:0}
+button.gh-ghost{background:var(--card2); color:var(--text); border:1px solid var(--border)}
+.gh-status{display:flex; align-items:center; gap:12px; font-size:.95rem; color:var(--text-3); margin:0 0 10px}
+.ghspin{width:16px;height:16px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:ghspin .9s linear infinite; flex:0 0 auto}
+@keyframes ghspin{to{transform:rotate(360deg)}}
+.gh-ok{color:var(--ok); font-weight:700}
+.gh-err{color:var(--err); font-weight:700}
+.gh-hint{color:var(--muted); font-size:.8rem; text-align:left}
+.home-nav{margin-top:30px; display:flex; gap:12px; flex-wrap:wrap}
+.home-nav a{padding:11px 15px; border-radius:9px; background:var(--accent); color:var(--accent-ink); text-decoration:none; font-weight:700}
+.home-nav a.secondary{color:var(--text-3); background:transparent; border:1px solid #4a607d}
+.issuer{margin:28px 0; padding:15px 17px; border-radius:10px; background:var(--card2); color:#dbeaff; font-family:ui-monospace,monospace; overflow-wrap:anywhere}
+.home-footer{margin-top:34px; font-size:.88rem; color:var(--muted)}

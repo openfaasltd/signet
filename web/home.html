@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signet by OpenFaaS Ltd</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<main class="card">
+  <div class="brand"><div class="mark">S</div><div class="wordmark">Signet<span class="byline">by OpenFaaS Ltd</span></div></div>
+  <h1>Signet</h1>
+  <p class="intro">A lightweight OpenID Connect provider for agents and automation.</p>
+  <div class="issuer">{{.Issuer}}</div>
+  <nav class="home-nav">
+    <a href="/.well-known/openid-configuration">OpenID Connect metadata</a>
+    <a class="secondary" href="/.well-known/jwks.json">JWKS</a>
+    <a class="secondary" href="/healthz">Health</a>
+  </nav>
+  <footer class="home-footer">OpenID Connect · ES256 signing · PKCE (S256)</footer>
+</main>
+</body>
+</html>
