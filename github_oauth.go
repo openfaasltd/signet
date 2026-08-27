@@ -145,7 +145,6 @@ func (s *Server) githubStatus(w http.ResponseWriter, r *http.Request) {
 
 	accessToken, err := pollGithubToken(cfg.ClientID, dev.deviceCode)
 	if err != nil {
-		// authorization_pending is the expected transient error.
 		s.json(w, map[string]string{"status": "pending"})
 		return
 	}
@@ -351,7 +350,7 @@ func (g *GitHubOAuth) allows(login string, orgs []string) bool {
 	matchLogin := len(g.AllowedLogins) == 0 || containsString(g.AllowedLogins, login)
 	matchOrg := len(g.AllowedOrgs) == 0 || intersectsString(g.AllowedOrgs, orgs)
 	if len(g.AllowedLogins) == 0 && len(g.AllowedOrgs) == 0 {
-		return false // purely allow list -> nobody by default
+		return false
 	}
 	return matchLogin && matchOrg
 }

@@ -22,6 +22,14 @@ config: |
     ]
   }
 
+# Federated login via GitHub OAuth Device Flow (client_id only, no secret).
+# When clientId is set it is merged into config.json under "github"; the
+# allowlists are default-deny, so at least one must be provided.
+github:
+  clientId: ""
+  # allowedLogins: ["alexellis"]
+  # allowedOrgs: ["openfaas"]
+
 # Master key that encrypts config.json, signet.key and admin-token at rest.
 # Leave empty to have the chart generate a random 32-byte key on install. NEVER
 # pass via env var; it is mounted as a file and consumed via --master-key-file.
