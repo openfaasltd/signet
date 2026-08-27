@@ -33,6 +33,9 @@ RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 \
 # as the numeric nonroot uid 65532, matching the k8s init container.
 FROM --platform=${TARGETPLATFORM:-linux/amd64} scratch
 COPY --from=builder /usr/bin/signet /signet
+# Needed for federated login (and any other outbound TLS): the daemon talks
+# to GitHub's device/token/API endpoints.
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/signet"]
