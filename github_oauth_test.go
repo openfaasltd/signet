@@ -168,6 +168,58 @@ func TestGitHubStatusPendingThenReady(t *testing.T) {
 	}
 }
 
+func TestGitHubStatusPollParsesJSONTokenResponse(t *testing.T) {
+	// GitHub honours Accept: application/json and returns a JSON object on a
+	// successful device token exchange. This exercised a real bug where the
+	// form-encoded parser could not see JSON access_token and the flow never
+	// advanced past pending.
+	oldD, oldT, oldU, oldO := githubDeviceCodeURL, githubTokenURL, githubUserURL, githubOrgsURL
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login/device/code", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"device_code":"dcx","user_code":"ABCD-1234","verification_uri":"https://example.com/device","expires_in":900,"interval":1}`))
+	})
+	mux.HandleFunc("/login/oauth/access_token", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"gho_json_token","token_type":"bearer","scope":"read:user"}`))
+	})
+	mux.HandleFunc("/api.github.com/user", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"login":"octocat","name":"Test User","email":"test@example.com"}`))
+	})
+	mux.HandleFunc("/api.github.com/user/orgs", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+	ts := httptest.NewServer(mux)
+	githubDeviceCodeURL = ts.URL + "/login/device/code"
+	githubTokenURL = ts.URL + "/login/oauth/access_token"
+	githubUserURL = ts.URL + "/api.github.com/user"
+	githubOrgsURL = ts.URL + "/api.github.com/user/orgs"
+	t.Cleanup(func() {
+		ts.Close()
+		githubDeviceCodeURL, githubTokenURL, githubUserURL, githubOrgsURL = oldD, oldT, oldU, oldO
+	})
+
+	s := testServerGitHub(t, &Config{GitHub: &GitHubOAuth{ClientID: "test-app", AllowedLogins: []string{"octocat"}}})
+	init := httptest.NewRecorder()
+	s.Handler().ServeHTTP(init, httptest.NewRequest(http.MethodGet, "/auth/github?"+url.Values{"client_id": {"client"}, "redirect_uri": {"http://client.test/callback"}}.Encode(), nil))
+	ptk := extractPTK(t, init.Body.String())
+
+	status := httptest.NewRecorder()
+	s.Handler().ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/auth/github/status/"+ptk, nil))
+	var resp map[string]string
+	_ = json.Unmarshal(status.Body.Bytes(), &resp)
+	if resp["status"] != "ready" {
+		t.Fatalf("expected ready for JSON token response, got %s", status.Body.String())
+	}
+	u, err := url.Parse(resp["redirect_url"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Query().Get("code") == "" {
+		t.Fatal("missing code in redirect")
+	}
+}
+
 func extractPTK(t *testing.T, body string) string {
 	t.Helper()
 	const k = `const ptk="`

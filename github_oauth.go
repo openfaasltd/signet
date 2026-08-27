@@ -260,9 +260,25 @@ func pollGithubToken(clientID, deviceCode string) (string, error) {
 	}
 	defer res.Body.Close()
 	body, _ := io.ReadAll(res.Body)
-	vals, err := url.ParseQuery(string(body))
-	if err != nil {
-		return "", err
+	// GitHub honours Accept: application/json and returns JSON, but to be
+	// robust we accept either the form-encoded response or a JSON object.
+	var vals url.Values
+	if strings.HasPrefix(strings.TrimSpace(string(body)), "{") {
+		var j struct {
+			AccessToken      string `json:"access_token"`
+			Error            string `json:"error"`
+			ErrorDescription string `json:"error_description"`
+		}
+		if err := json.Unmarshal(body, &j); err != nil {
+			return "", err
+		}
+		vals = url.Values{"error": {j.Error}, "error_description": {j.ErrorDescription}, "access_token": {j.AccessToken}}
+	} else {
+		p, err := url.ParseQuery(string(body))
+		if err != nil {
+			return "", err
+		}
+		vals = p
 	}
 	if vals.Get("error") == "authorization_pending" {
 		return "", errPending
