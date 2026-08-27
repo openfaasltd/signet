@@ -62,9 +62,9 @@ var githubLoginPage = template.Must(template.New("gh").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in with GitHub · Signet</title>
 <style>body{font-family:ui-sans-serif,system-ui,sans-serif;background:#10141c;color:#ecf2ff;display:grid;place-items:center;min-height:100vh;margin:0}.card{width:min(92vw,440px);padding:36px;border:1px solid #34445c;border-radius:16px;background:#161c28}.code{font-size:2rem;letter-spacing:.15em;color:#9dd6ff;font-weight:800}.uri{overflow-wrap:anywhere}.pending{color:#9db1cd}.err{color:#ff8fa3}</style></head><body>
-<div class="card"><p class="intro">Go to <a class="uri" href="{{.URI}}">{{.URI}}</a> and enter the code:</p>
+<div class="card"><p class="intro">Open <a class="uri" target="_blank" rel="noopener" href="{{.URI}}">{{.URI}}</a> and enter the code:</p>
 <p class="code">{{.UserCode}}</p>
-<p class="pending" id="status">Waiting for authorization…</p></div>
+<p class="pending" id="status">Waiting for token…</p></div>
 <script>
 const ptk="{{.PTK}}";
 (async function poll(){
