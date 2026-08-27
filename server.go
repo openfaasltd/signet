@@ -255,7 +255,7 @@ button.gh-ghost { background: #172233; color: #ecf2ff; border: 1px solid #34445c
   </div>
   <div id="ghDone" class="gh-panel"><div class="gh-status gh-ok">You&rsquo;re signed in</div><div style="color:#b8c7dc">Signet verified your GitHub identity. Opening the app&hellip;</div></div>
   <div id="ghFail" class="gh-panel"><div class="gh-status gh-err">Sign-in failed</div><div id="ghFailMsg" style="color:#b8c7dc">Could not complete the sign-in.</div></div>
-  <div class="gh-hint" id="ghHint" style="margin-top:14px">Device code expires in <span id="ghExp">—</span>s.</div>
+  <div class="gh-hint" id="ghHint" style="display:none;margin-top:14px">Device code expires in <span id="ghExp">—</span>s.</div>
   <script>
   (function(){
     if(!document.getElementById) return;
@@ -269,46 +269,48 @@ button.gh-ghost { background: #172233; color: #ecf2ff; border: 1px solid #34445c
     var failPanel=document.getElementById('ghFail');
     var codeEl=document.getElementById('ghCode');
     var linkEl=document.getElementById('ghLink');
-    var statusEl=document.getElementById('ghStatus');
     var expEl=document.getElementById('ghExp');
     var failMsg=document.getElementById('ghFailMsg');
     var hint=document.getElementById('ghHint');
     var id='', url='', timer=null, countdown=null;
 
-    function post(p,path){ return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); }
-    function copyTxt(t){ return (navigator.clipboard? navigator.clipboard.writeText(t): Promise.reject()).catch(function(){ var ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');}catch(e){} document.body.removeChild(ta); }); }
-    document.getElementById('ghCopy').addEventListener('click',function(){ copyTxt(codeEl.textContent); var b=this; b.textContent='Copied'; setTimeout(function(){b.textContent='Copy';},1200); });
-    document.getElementById('ghCancel').addEventListener('click',function(){ clearInterval(timer); clearInterval(countdown); if(id) post({id:id},'/auth/github/device/cancel'); reset(); });
-    function reset(){ loginForm.style.display=''; startBtn.style.display=''; devPanel.style.display='none'; donePanel.style.display='none'; failPanel.style.display='none'; hint.style.display=''; initStatus(); }
-    function initStatus(){ statusEl.innerHTML='Waiting for your authorization…'; var s=document.getElementById('ghProps'); }
+    function post(p,path){ return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p||{}),credentials:'same-origin'}); }
+    function showLogin(){ loginForm.style.display=''; startBtn.style.display=''; devPanel.style.display='none'; donePanel.style.display='none'; failPanel.style.display='none'; hint.style.display='none'; }
+    function showPanel(){ loginForm.style.display='none'; startBtn.style.display='none'; failPanel.style.display='none'; donePanel.style.display='none'; devPanel.style.display=''; hint.style.display=''; }
+    function showDone(redir){ clearInterval(timer); clearInterval(countdown); loginForm.style.display='none'; startBtn.style.display='none'; devPanel.style.display='none'; failPanel.style.display='none'; donePanel.style.display=''; hint.style.display='none'; window.setTimeout(function(){ if(redir) window.location.assign(redir); },1200); }
+    function showFail(reason){ clearInterval(timer); clearInterval(countdown); loginForm.style.display='none'; startBtn.style.display='none'; devPanel.style.display='none'; donePanel.style.display='none'; failPanel.style.display=''; hint.style.display='none'; failMsg.textContent=reason||'GitHub login failed. Try again.'; }
 
-    function poll(){
-      post({id:id},'/auth/github/device/status').then(function(r){
-        if(r.status===200){ return r.json().then(function(d){ clearInterval(timer); clearInterval(countdown); loginForm.style.display='none'; startBtn.style.display='none'; devPanel.style.display='none'; donePanel.style.display=''; window.setTimeout(function(){ if(d.redirect_url) window.location.assign(d.redirect_url); },1200); }); }
-        if(r.status===202){ return r.json().then(function(d){ window.setTimeout(poll,(d.retry_after||5)*1000); }); }
-        clearInterval(timer);
-        loginForm.style.display='none'; startBtn.style.display='none'; devPanel.style.display='none'; failPanel.style.display='';
-        failMsg.textContent = (r.status===410? 'The code expired. Start again to get a new one.' : (r.status===403? 'Your GitHub identity is not authorized for this Signet.' : 'GitHub login failed. Try again.'));
-      }).catch(function(){ window.setTimeout(poll,5000); });
-    }
+    document.getElementById('ghCopy').addEventListener('click',function(){
+      var b=this; var t=codeEl.textContent;
+      if(navigator.clipboard){ navigator.clipboard.writeText(t).then(function(){ b.textContent='Copied'; setTimeout(function(){b.textContent='Copy';},1200); }).catch(function(){}); }
+    });
+    document.getElementById('ghCancel').addEventListener('click',function(){ if(id) post({id:id},'/auth/github/device/cancel'); showLogin(); });
 
     function countdown(from){ var left=from||900; expEl.textContent=left; countdown=setInterval(function(){ left--; if(left<=0){ clearInterval(countdown); expEl.textContent='0'; } else expEl.textContent=left; },1000); }
 
-    startBtn.addEventListener('click',function(){
+    function poll(){
+      if(!id) return;
+      post({id:id},'/auth/github/device/status').then(function(r){
+        if(r.status===200){ return r.json().then(function(d){ showDone(d.redirect_url); }); }
+        if(r.status===202){ return r.json().then(function(d){ timer=window.setTimeout(poll,(d.retry_after||5)*1000); }); }
+        showFail(r.status===410? 'The code expired. Start again to get a new one.' : (r.status===403? 'Your GitHub identity is not authorized for this Signet.' : 'GitHub login failed. Try again.'));
+      }).catch(function(){ timer=window.setTimeout(poll,4000); });
+    }
+
+    startBtn.addEventListener('click', function(){
       startBtn.disabled=true; startBtn.textContent='Starting GitHub…';
       post(P,'/auth/github/device').then(function(r){
-        startBtn.disabled=false; startBtn.textContent='Sign in with GitHub';
-        if(r.status!==200){ failMsg.textContent='Could not start GitHub login. Try again.'; return; }
-        return r.json();
-      }).then(function(d){
-        id=d.id; url=d.verification_uri||'https://github.com/login/device';
-        codeEl.textContent=d.user_code||'----';
-        linkEl.textContent=url.replace(/^https?:\/\//,''); linkEl.href=url;
-        loginForm.style.display='none'; startBtn.style.display='none'; donePanel.style.display='none'; failPanel.style.display='none';
-        devPanel.style.display=''; hint.style.display='';
-        countdown(d.expires_in||900);
-        poll();
-      }).catch(function(){ startBtn.disabled=false; startBtn.textContent='Sign in with GitHub'; });
+        return r.json().then(function(d){
+          if(r.status!==200 || !d || !d.id) throw new Error('ghstart');
+          id=d.id; url=d.verification_uri||'https://github.com/login/device';
+          codeEl.textContent=d.user_code||'----';
+          linkEl.textContent=url.replace(/^https?:\/\//,''); linkEl.href=url;
+          startBtn.disabled=false; startBtn.textContent='Sign in with GitHub';
+          showPanel();
+          countdown(d.expires_in||900);
+          poll();
+        });
+      }).catch(function(){ startBtn.disabled=false; startBtn.textContent='Sign in with GitHub'; showLogin(); });
     });
   })();
   </script>
