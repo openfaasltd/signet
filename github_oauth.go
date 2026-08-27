@@ -61,18 +61,63 @@ type githubDevice struct {
 var githubLoginPage = template.Must(template.New("gh").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in with GitHub · Signet</title>
-<style>body{font-family:ui-sans-serif,system-ui,sans-serif;background:#10141c;color:#ecf2ff;display:grid;place-items:center;min-height:100vh;margin:0}.card{width:min(92vw,440px);padding:36px;border:1px solid #34445c;border-radius:16px;background:#161c28}.code{font-size:2rem;letter-spacing:.15em;color:#9dd6ff;font-weight:800}.uri{color:#ffffff;overflow-wrap:anywhere}.pending{color:#9db1cd}.err{color:#ff8fa3}</style></head><body>
-<div class="card"><p class="intro">Open <a class="uri" target="_blank" rel="noopener" href="{{.URI}}">{{.URI}}</a> and enter the code:</p>
-<p class="code">{{.UserCode}}</p>
-<p class="pending" id="status">Waiting for token…</p></div>
+<style>
+:root{--bg:#10141c;--card:#161c28;--border:#34445c;--text:#ecf2ff;--text-2:#b8c7dc;--muted:#8294ac;--blue:#9dd6ff;--ok:#3fb950;--err:#f85149}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem}
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:2.4rem 2rem;width:100%;max-width:26rem;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+.mark{width:64px;height:64px;border-radius:14px;background:var(--blue);color:#102033;display:flex;align-items:center;justify-content:center;font-size:2rem;font-weight:800;margin:0 auto 1.1rem}
+h1{margin:0 0 1.5rem;font-size:1.25rem;font-weight:650}
+.step{color:var(--text-2);font-size:.92rem;line-height:1.6;margin:0 0 1.2rem}
+.uri{color:#fff;overflow-wrap:anywhere;text-decoration:underline}
+.code{display:inline-block;background:#0b1017;border:1px solid var(--border);border-radius:12px;padding:.8rem 1.2rem;font-family:ui-monospace,SFMono-Regular,monospace;font-size:1.7rem;letter-spacing:.22em;color:var(--blue);font-weight:800;margin-bottom:1.4rem}
+.status{display:flex;align-items:center;justify-content:center;gap:.5rem;font-size:1rem;font-weight:600;color:var(--text-2);margin:0}
+.status svg{flex:none}
+.spin{width:26px;height:26px;margin-right:.4rem;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:s .8s linear infinite;display:inline-block;vertical-align:middle}
+@keyframes s{to{transform:rotate(360deg)}}
+.ok{color:var(--ok)}.err{color:var(--err)}
+.hint{margin-top:1.6rem;font-size:.78rem;color:var(--muted)}
+.msg{background:#0b1017;border:1px solid var(--border);border-radius:10px;padding:.8rem 1rem;margin-top:1.1rem;color:var(--text-2);font-family:ui-monospace,monospace;font-size:.8rem;text-align:left;white-space:pre-wrap;word-break:break-word}
+[hidden]{display:none}
+</style></head><body>
+<div class="card">
+<div class="mark">S</div>
+<h1>Sign in with GitHub</h1>
+<div id="wait">
+<p class="step">Open <a class="uri" target="_blank" rel="noopener" href="{{.URI}}">{{.URI}}</a> in a new tab and enter the code:</p>
+<div class="code">{{.UserCode}}</div>
+<div class="status"><span class="spin"></span>Waiting for your authorization&hellip;</div>
+</div>
+<div id="done" hidden>
+<div class="status ok"><svg viewBox="0 0 16 16" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M2.5 8.5l3.5 3.5 7-8"/></svg>You're signed in</div>
+<p class="step">Signet verified your GitHub identity. Opening the app&hellip;</p>
+</div>
+<div id="fail" hidden>
+<div class="status err"><svg viewBox="0 0 16 16" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>Sign-in failed</div>
+<p class="step" id="failreason">Could not complete the sign-in.</p>
+<div class="msg" id="failmsg" hidden></div>
+</div>
+<p class="hint">Don&rsquo;t close this tab while you authorize.</p>
+</div>
 <script>
 const ptk="{{.PTK}}";
-(async function poll(){
+function ready(url){
+  document.getElementById("wait").hidden=true;
+  document.getElementById("done").hidden=false;
+  setTimeout(function(){ window.location.assign(url); }, 1200);
+}
+function fail(reason,msg){
+  document.getElementById("wait").hidden=true;
+  document.getElementById("fail").hidden=false;
+  if(reason){ document.getElementById("failreason").textContent=reason; }
+  if(msg){ var el=document.getElementById("failmsg"); el.textContent=msg; el.hidden=false; }
+}
+( async function poll(){
   try{
     const r=await fetch("/auth/github/status/"+ptk,{headers:{Accept:"application/json"}});
     const j=await r.json();
-    if(j.status==="ready"){ window.location.assign(j.redirect_url); return; }
-    if(j.status==="error"){ document.getElementById("status").textContent="Error: "+j.error; return; }
+    if(j.status==="ready"){ ready(j.redirect_url); return; }
+    if(j.status==="error"){ fail(null, j.error); return; }
   }catch(e){}
   setTimeout(poll, {{.Interval}}*1000);
 })();
