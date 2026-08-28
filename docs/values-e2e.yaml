@@ -1,7 +1,7 @@
 # E2E sandbox overrides for the signet chart. Not for release.
 image:
   repository: ttl.sh/signet-e2e
-  tag: "12h"
+  tag: "13h"
   pullPolicy: IfNotPresent
 
 issuer: "http://signet.openfaas.svc:8080"
