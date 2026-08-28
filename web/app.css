@@ -28,22 +28,20 @@ input:focus{border-color:var(--accent); box-shadow:0 0 0 3px #9dd6ff2b}
 button{min-height:44px; border:0; border-radius:8px; background:var(--accent); color:var(--accent-ink); cursor:pointer; font:inherit; font-weight:800}
 button:hover{background:#b8e3ff}
 .error{margin:0 0 20px; padding:12px 14px; border:1px solid #b95768; border-radius:9px; background:#512934; color:#ffd8de; line-height:1.45}
-.divider{display:flex; align-items:center; gap:12px; color:var(--muted); font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; margin:22px 0 16px}
-.divider::before,.divider::after{content:""; flex:1; height:1px; background:var(--border)}
-.ghblock{display:grid; gap:12px}
+.ghblock{display:grid; gap:12px; margin-top:22px}
 .gh-panel{display:none; color:var(--text-2); font-size:.92rem; line-height:1.6}
 .gh-link{color:var(--accent); word-break:break-word; overflow-wrap:anywhere}
-.gh-code{text-align:center; background:#0b1017; border:1px solid var(--border); border-radius:12px; padding:16px; font-family:ui-monospace,SFMono-Regular,monospace; font-size:1.5rem; letter-spacing:.24em; color:var(--accent); font-weight:800; margin:18px 0 14px}
-.gh-actions{display:flex; gap:12px; margin:0 0 16px}
+.gh-code{text-align:center; background:#0b1017; border:1px solid var(--border); border-radius:12px; padding:16px; font-family:ui-monospace,SFMono-Regular,monospace; font-size:1.5rem; letter-spacing:.24em; color:var(--accent); font-weight:800; margin:18px 0 16px}
+.gh-actions{display:flex; gap:12px; margin:2px 0 20px}
 .gh-actions a{flex:1; text-align:center; text-decoration:none}
 .gh-actions button{flex:1; min-height:44px; margin:0}
 button.gh-ghost{background:var(--card2); color:var(--text); border:1px solid var(--border)}
-.gh-status{display:flex; align-items:center; gap:12px; font-size:.95rem; color:var(--text-3); margin:0 0 0}
+.gh-status{display:flex; align-items:center; gap:12px; font-size:.95rem; color:var(--text-3)}
 .ghspin{width:16px;height:16px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:ghspin .9s linear infinite; flex:0 0 auto; margin-right:2px}
 @keyframes ghspin{to{transform:rotate(360deg)}}
 .gh-ok{color:var(--ok); font-weight:700}
 .gh-err{color:var(--err); font-weight:700}
-.gh-hint{color:var(--muted); font-size:.8rem; text-align:left; margin-top:10px}
+.gh-hint{color:var(--muted); font-size:.8rem; text-align:left; margin-top:12px}
 .home-nav{margin-top:30px; display:flex; gap:12px; flex-wrap:wrap}
 .home-nav a{padding:11px 15px; border-radius:9px; background:var(--accent); color:var(--accent-ink); text-decoration:none; font-weight:700}
 .home-nav a.secondary{color:var(--text-3); background:transparent; border:1px solid #4a607d}

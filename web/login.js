@@ -17,7 +17,7 @@
   var expEl = document.getElementById('ghExp');
   var failMsg = document.getElementById('ghFailMsg');
   var hint = document.getElementById('ghHint');
-  var id = '', pollTimer = null, cdTimer = null, started = false;
+  var id = '', pollTimer = null, cdTimer = null, started = false, cancelled = false;
 
   function post(p, path) {
     return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p || {}), credentials: 'same-origin' });
@@ -33,15 +33,21 @@
     var b = this, t = codeEl.textContent;
     if (navigator.clipboard) navigator.clipboard.writeText(t).then(function () { b.textContent = 'Copied'; window.setTimeout(function () { b.textContent = 'Copy'; }, 1200); }).catch(function () {});
   });
-  document.getElementById('ghCancel').addEventListener('click', function () { clearInterval(pollTimer); clearInterval(cdTimer); if (id) post({ id: id }, '/auth/github/device/cancel'); showLogin(); });
+  document.getElementById('ghCancel').addEventListener('click', function () {
+    clearInterval(pollTimer); clearInterval(cdTimer);
+    cancelled = true;
+    if (id) post({ id: id }, '/auth/github/device/cancel');
+    showLogin();
+  });
 
   function poll() {
-    if (!id) return;
+    if (!id || cancelled) return;
     post({ id: id }, '/auth/github/device/status').then(function (r) {
-      if (r.status === 200) return r.json().then(function (d) { showDone(d.redirect_url); });
+      if (cancelled) return;
+      if (r.status === 200) return r.json().then(function (d) { if (cancelled) return; showDone(d.redirect_url); });
       if (r.status === 202) return r.json().then(function (d) { pollTimer = window.setTimeout(poll, (d.retry_after || 5) * 1000); });
       showFail(r.status === 410 ? 'The code expired. Start again to get a new one.' : (r.status === 403 ? 'Your GitHub identity is not authorized for this Signet.' : 'GitHub login failed. Try again.'));
-    }).catch(function () { pollTimer = window.setTimeout(poll, 4000); });
+    }).catch(function () { if (!cancelled) pollTimer = window.setTimeout(poll, 4000); });
   }
 
   startBtn.addEventListener('click', function () {
@@ -52,7 +58,7 @@
         id = d.id; var u = d.verification_uri || 'https://github.com/login/device';
         codeEl.textContent = d.user_code || '----';
         linkEl.textContent = u.replace(/^https?:\/\//, ''); linkEl.href = u;
-        started = true;
+        started = true; cancelled = false;
         showPanel();
         countdown(d.expires_in || 900);
         poll();
