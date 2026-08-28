@@ -22,7 +22,10 @@
   function post(p, path) {
     return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p || {}), credentials: 'same-origin' });
   }
-  function showLogin() { loginForm.style.display = ''; startBtn.style.display = ''; devPanel.style.display = 'none'; donePanel.style.display = 'none'; failPanel.style.display = 'none'; hint.style.display = 'none'; }
+  function showLogin() {
+    loginForm.style.display = ''; devPanel.style.display = 'none'; donePanel.style.display = 'none'; failPanel.style.display = 'none'; hint.style.display = 'none';
+    startBtn.style.display = ''; startBtn.disabled = false; startBtn.textContent = 'Sign in with GitHub';
+  }
   function showPanel() { loginForm.style.display = 'none'; startBtn.style.display = 'none'; failPanel.style.display = 'none'; donePanel.style.display = 'none'; devPanel.style.display = 'block'; hint.style.display = 'block'; }
   function showDone(redir) { clearInterval(pollTimer); clearInterval(cdTimer); loginForm.style.display = 'none'; startBtn.style.display = 'none'; devPanel.style.display = 'none'; failPanel.style.display = 'none'; donePanel.style.display = 'block'; hint.style.display = 'none'; window.setTimeout(function () { if (redir) window.location.assign(redir); }, 1200); }
   function showFail(reason) { clearInterval(pollTimer); clearInterval(cdTimer); loginForm.style.display = 'none'; startBtn.style.display = 'none'; devPanel.style.display = 'none'; donePanel.style.display = 'none'; failPanel.style.display = 'block'; hint.style.display = 'none'; failMsg.textContent = reason || 'GitHub login failed. Try again.'; }
