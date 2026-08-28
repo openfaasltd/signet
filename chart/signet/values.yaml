@@ -1,7 +1,7 @@
 # Signet chart defaults
 image:
-  repository: ttl.sh/signet
-  tag: "latest"
+  repository: ghcr.io/openfaasltd/signet
+  tag: "v0.0.4"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
