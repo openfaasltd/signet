@@ -1,8 +1,13 @@
 # Signet chart defaults
-image:
-  repository: ghcr.io/openfaasltd/signet
-  tag: "v0.0.4"
-  pullPolicy: IfNotPresent
+image: ghcr.io/openfaasltd/signet:latest
+
+# Optionally rewrite the image registry (docker.io/, ghcr.io/, quay.io/,
+# registry.k8s.io/) to a custom mirror. Leave empty to use the image as-is.
+registryPrefix: ""
+
+# Pull policy for the signet image. Always by default so the mutable :latest
+# tag is refreshed on every deployment/replica creation.
+imagePullPolicy: Always
 
 replicaCount: 1
 

@@ -38,3 +38,34 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- randAlphaNum 43 -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Image helper that replaces the registry with a custom prefix if specified.
+Usage: {{ include "signet.image" (dict "image" .Values.image "registryPrefix" .Values.registryPrefix) }}
+*/}}
+{{- define "signet.image" -}}
+{{- $image := .image -}}
+{{- $registryPrefix := .registryPrefix -}}
+{{- if $registryPrefix -}}
+  {{- if hasPrefix "docker.io/" $image -}}
+    {{- printf "%s/%s" $registryPrefix (trimPrefix "docker.io/" $image) -}}
+  {{- else if hasPrefix "ghcr.io/" $image -}}
+    {{- printf "%s/%s" $registryPrefix (trimPrefix "ghcr.io/" $image) -}}
+  {{- else if hasPrefix "quay.io/" $image -}}
+    {{- printf "%s/%s" $registryPrefix (trimPrefix "quay.io/" $image) -}}
+  {{- else if hasPrefix "registry.k8s.io/" $image -}}
+    {{- printf "%s/%s" $registryPrefix (trimPrefix "registry.k8s.io/" $image) -}}
+  {{- else if contains "/" $image -}}
+    {{- $parts := splitList "/" $image -}}
+    {{- if gt (len $parts) 2 -}}
+      {{- printf "%s/%s" $registryPrefix (join "/" (rest $parts)) -}}
+    {{- else -}}
+      {{- printf "%s/%s" $registryPrefix $image -}}
+    {{- end -}}
+  {{- else -}}
+    {{- printf "%s/%s" $registryPrefix $image -}}
+  {{- end -}}
+{{- else -}}
+  {{- $image -}}
+{{- end -}}
+{{- end -}}

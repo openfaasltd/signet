@@ -12,6 +12,7 @@ TAG?=$(VERSION)
 OWNER?=alexellis2
 SERVER?=docker.io
 PLATFORMS?=linux/amd64,linux/arm64,darwin/arm64
+VERBOSE?=false
 
 LDFLAGS := "-s -w -X main.PublicKey=$(PUBLIC_KEY) -X main.Version=$(VERSION) -X main.GitCommit=$(GIT_COMMIT)"
 export GO111MODULE=on
@@ -69,3 +70,27 @@ publish:
 		--build-arg PUBLIC_KEY=$(PUBLIC_KEY) \
 		--tag $(SERVER)/$(OWNER)/$(IMG_NAME):$(TAG) \
 		.
+
+.PHONY: verify-chart
+verify-chart:
+	@echo Verifying signet helm chart image in remote registry && \
+	arkade chart verify --verbose=$(VERBOSE) -f ./chart/signet/values.yaml
+
+.PHONY: upgrade-chart
+upgrade-chart:
+	@echo Upgrading signet helm chart image && \
+	arkade chart upgrade --verbose=$(VERBOSE) -w -f ./chart/signet/values.yaml
+
+.PHONY: bump-chart
+bump-chart:
+	arkade chart bump --file ./chart/signet/Chart.yaml -w
+
+.PHONY: charts
+charts: verify-chart charts-only
+
+.PHONY: charts-only
+charts-only:
+	@cd chart && \
+		helm package signet/
+	mv chart/signet-*.tgz docs/
+	helm repo index docs --url https://openfaasltd.github.io/signet/ --merge ./docs/index.yaml

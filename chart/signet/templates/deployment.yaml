@@ -18,8 +18,8 @@ spec:
     spec:
       containers:
         - name: signet
-          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ include "signet.image" (dict "image" .Values.image "registryPrefix" .Values.registryPrefix) }}
+          imagePullPolicy: {{ .Values.imagePullPolicy | default "Always" }}
           args:
             - up
             - --listen
